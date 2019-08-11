@@ -1971,7 +1971,7 @@ void ShaderEditor::loadNodeConnections(InputMemoryStream& blob, Node& node)
 void ShaderEditor::load()
 {
 	char path[MAX_PATH_LENGTH];
-	if (!OS::getOpenFilename(path, lengthOf(path), "Shader edit data\0*.sed\0", nullptr))
+	if (!OS::getOpenFilename(Span(path), "Shader edit data\0*.sed\0", nullptr))
 	{
 		return;
 	}
@@ -2033,7 +2033,7 @@ void ShaderEditor::load()
 bool ShaderEditor::getSavePath()
 {
 	char path[MAX_PATH_LENGTH];
-	if (OS::getSaveFilename(path, lengthOf(path), "Shader edit data\0*.sed\0", "sed"))
+	if (OS::getSaveFilename(Span(path), "Shader edit data\0*.sed\0", "sed"))
 	{
 		m_path = path;
 		return true;

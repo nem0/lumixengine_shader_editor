@@ -10,3 +10,5 @@ project "shader_editor"
 	links { "engine" }
 	useLua()
 	defaultConfigurations()
+	
+linkPlugin("shader_editor")
