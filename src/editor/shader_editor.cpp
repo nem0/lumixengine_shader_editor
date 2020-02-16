@@ -1,3 +1,4 @@
+#define LUMIX_NO_CUSTOM_CRT
 #include "shader_editor.h"
 #include "editor/utils.h"
 #include "engine/crc32.h"
@@ -256,7 +257,7 @@ struct VertexOutputNode : public ShaderEditor::Node
 		m_inputs.push(nullptr); // gl_Position
 		for (int i = 0; i < c; ++i) {
 			blob.read(m_varyings[i].type);
-			blob.readString(m_varyings[i].name.data, lengthOf(m_varyings[i].name.data));
+			blob.readString(Span(m_varyings[i].name.data));
 			m_inputs.push(nullptr);
 		}
 	}
@@ -979,7 +980,7 @@ struct FragmentInputNode : public ShaderEditor::Node
 		m_outputs.clear();
 		for (int i = 0; i < c; ++i) {
 			blob.read(m_varyings[i].type);
-			blob.readString(m_varyings[i].name.data, lengthOf(m_varyings[i].name.data));
+			blob.readString(Span(m_varyings[i].name.data));
 			m_outputs.push(nullptr);
 		}
 	}
@@ -1144,7 +1145,7 @@ struct PassNode : public ShaderEditor::Node
 	}
 
 	void save(OutputMemoryStream& blob) override { blob.writeString(m_pass); }
-	void load(InputMemoryStream& blob) override { blob.readString(m_pass, lengthOf(m_pass)); }
+	void load(InputMemoryStream& blob) override { blob.readString(Span(m_pass)); }
 	ShaderEditor::ValueType getOutputType(int) const override { return getInputType(0); }
 
 	void generate(OutputMemoryStream& blob) override 
@@ -1359,7 +1360,7 @@ struct UniformNode : public ShaderEditor::Node
 	}
 
 	void save(OutputMemoryStream& blob) override { blob.write(m_type); blob.writeString(m_name); }
-	void load(InputMemoryStream& blob) override { blob.read(m_type); blob.readString(m_name.data, lengthOf(m_name.data)); }
+	void load(InputMemoryStream& blob) override { blob.read(m_type); blob.readString(Span(m_name.data)); }
 	ShaderEditor::ValueType getOutputType(int) const override { return m_value_type; }
 
 
@@ -1674,7 +1675,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(8192);
 
-	for (int i = 0; i < lengthOf(m_textures); ++i) {
+	for (u32 i = 0; i < lengthOf(m_textures); ++i) {
 		if (!m_textures[i][0]) continue;
 
 		blob << "texture_slot {\n";
@@ -1696,7 +1697,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	auto writeShader = [&](const char* shader_type, const Array<Node*>& nodes){
 		blob << shader_type << "_shader [[\n";
 
-		for (int i = 0; i < lengthOf(m_textures); ++i) {
+		for (u32 i = 0; i < lengthOf(m_textures); ++i) {
 			if (!m_textures[i][0]) continue;
 
 			blob << "\tlayout (binding=" << i << ") uniform sampler2D " << m_textures[i] << ";\n";
@@ -1737,7 +1738,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	}
 
 	m_source.resize((int)blob.getPos());
-	copyMemory(m_source.getData(), blob.getData(), m_source.length() + 1);
+	memcpy(m_source.getData(), blob.getData(), m_source.length() + 1);
 }
 
 
@@ -1830,7 +1831,7 @@ void ShaderEditor::save(const char* path)
 
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(4096);
-	for (int i = 0; i < lengthOf(m_textures); ++i)
+	for (u32 i = 0; i < lengthOf(m_textures); ++i)
 	{
 		blob.writeString(m_textures[i]);
 	}
@@ -1998,9 +1999,9 @@ void ShaderEditor::load()
 	file.close();
 
 	InputMemoryStream blob(&data[0], data_size);
-	for (int i = 0; i < lengthOf(m_textures); ++i)
+	for (u32 i = 0; i < lengthOf(m_textures); ++i)
 	{
-		blob.readString(m_textures[i].data, lengthOf(m_textures[i].data));
+		blob.readString(Span(m_textures[i].data));
 	}
 
 	int size;
@@ -2192,7 +2193,7 @@ void ShaderEditor::onGUILeftColumn()
 	ImGui::PushItemWidth(m_left_col_width);
 
 	if (ImGui::CollapsingHeader("Textures")) {
-		for (int i = 0; i < lengthOf(m_textures); ++i) {
+		for (u32 i = 0; i < lengthOf(m_textures); ++i) {
 			ImGui::InputText(StaticString<10>("###tex", i), m_textures[i].data, sizeof(m_textures[i]));
 		}
 	}
@@ -2385,7 +2386,7 @@ void ShaderEditor::onGUI()
 	title << "###Shader Editor";
 	if (ImGui::Begin(title, &m_is_open, ImGuiWindowFlags_MenuBar))
 	{
-		m_is_focused = ImGui::IsFocusedHierarchy();
+		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
 
 		onGUIMenu();
 		onGUILeftColumn();

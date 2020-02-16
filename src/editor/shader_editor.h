@@ -3,6 +3,7 @@
 
 #include "engine/array.h"
 #include "engine/path.h"
+#include "engine/string.h"
 #include "imgui/imgui.h"
 
 

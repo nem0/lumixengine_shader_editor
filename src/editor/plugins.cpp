@@ -1,3 +1,5 @@
+#define LUMIX_NO_CUSTOM_CRT
+#include "imgui/imgui.h"
 #include "editor/settings.h"
 #include "editor/studio_app.h"
 #include "editor/utils.h"
@@ -15,8 +17,8 @@ struct ShaderEditorPlugin final : public StudioApp::GUIPlugin
 	{
 		Action* action = LUMIX_NEW(app.getWorldEditor().getAllocator(), Action)(
 			"Shader Editor", "Toggle shader editor", "shaderEditor");
-		action->func.bind<ShaderEditorPlugin, &ShaderEditorPlugin::onAction>(this);
-		action->is_selected.bind<ShaderEditorPlugin, &ShaderEditorPlugin::isOpen>(this);
+		action->func.bind<&ShaderEditorPlugin::onAction>(this);
+		action->is_selected.bind<&ShaderEditorPlugin::isOpen>(this);
 		app.addWindowAction(action);
 		m_shader_editor.m_is_open = false;
 	}
