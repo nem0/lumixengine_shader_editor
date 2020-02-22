@@ -5,7 +5,7 @@
 #include "engine/log.h"
 #include "engine/math.h"
 #include "engine/os.h"
-#include "engine/path_utils.h"
+#include "engine/path.h"
 #include "engine/stream.h"
 #include "engine/string.h"
 #include "renderer/model.h"
@@ -1725,7 +1725,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	writeShader("vertex", m_vertex_nodes);
 
 	if (save_file) {
-		PathUtils::FileInfo fi(sed_path);
+		PathInfo fi(sed_path);
 		StaticString<MAX_PATH_LENGTH> path(fi.m_dir, fi.m_basename, ".shd");
 		OS::OutputFile file;
 		if (!file.open(path)) {

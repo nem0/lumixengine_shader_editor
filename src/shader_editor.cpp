@@ -1,5 +1,5 @@
 #define LUMIX_NO_CUSTOM_CRT
-#include "engine/iplugin.h"
+#include "engine/plugin.h"
 #include "imgui/imgui.h"
 
 

@@ -11,8 +11,8 @@ namespace Lumix
 {
 
 
-class InputMemoryStream;
-class OutputMemoryStream;
+struct InputMemoryStream;
+struct OutputMemoryStream;
 
 
 class ShaderEditor
