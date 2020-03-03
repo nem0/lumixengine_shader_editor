@@ -257,7 +257,7 @@ struct VertexOutputNode : public ShaderEditor::Node
 		m_inputs.push(nullptr); // gl_Position
 		for (int i = 0; i < c; ++i) {
 			blob.read(m_varyings[i].type);
-			blob.readString(Span(m_varyings[i].name.data));
+			m_varyings[i].name = blob.readString();
 			m_inputs.push(nullptr);
 		}
 	}
@@ -980,7 +980,7 @@ struct FragmentInputNode : public ShaderEditor::Node
 		m_outputs.clear();
 		for (int i = 0; i < c; ++i) {
 			blob.read(m_varyings[i].type);
-			blob.readString(Span(m_varyings[i].name.data));
+			m_varyings[i].name = blob.readString();
 			m_outputs.push(nullptr);
 		}
 	}
@@ -1145,7 +1145,7 @@ struct PassNode : public ShaderEditor::Node
 	}
 
 	void save(OutputMemoryStream& blob) override { blob.writeString(m_pass); }
-	void load(InputMemoryStream& blob) override { blob.readString(Span(m_pass)); }
+	void load(InputMemoryStream& blob) override { copyString(m_pass, blob.readString()); }
 	ShaderEditor::ValueType getOutputType(int) const override { return getInputType(0); }
 
 	void generate(OutputMemoryStream& blob) override 
@@ -1360,7 +1360,7 @@ struct UniformNode : public ShaderEditor::Node
 	}
 
 	void save(OutputMemoryStream& blob) override { blob.write(m_type); blob.writeString(m_name); }
-	void load(InputMemoryStream& blob) override { blob.read(m_type); blob.readString(Span(m_name.data)); }
+	void load(InputMemoryStream& blob) override { blob.read(m_type); m_name = blob.readString(); }
 	ShaderEditor::ValueType getOutputType(int) const override { return m_value_type; }
 
 
@@ -2001,7 +2001,7 @@ void ShaderEditor::load()
 	InputMemoryStream blob(&data[0], data_size);
 	for (u32 i = 0; i < lengthOf(m_textures); ++i)
 	{
-		blob.readString(Span(m_textures[i].data));
+		m_textures[i] = blob.readString();
 	}
 
 	int size;
