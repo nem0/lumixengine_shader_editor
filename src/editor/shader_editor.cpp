@@ -1733,12 +1733,12 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 			return;
 		}
 
-		file.write(blob.getData(), blob.getPos());
+		file.write(blob.data(), blob.size());
 		file.close();
 	}
 
-	m_source.resize((int)blob.getPos());
-	memcpy(m_source.getData(), blob.getData(), m_source.length() + 1);
+	m_source.resize((u32)blob.size());
+	memcpy(m_source.getData(), blob.data(), m_source.length() + 1);
 }
 
 
@@ -1860,7 +1860,7 @@ void ShaderEditor::save(const char* path)
 		saveNodeConnections(blob, *node);
 	}
 
-	bool success = file.write(blob.getData(), blob.getPos());
+	bool success = file.write(blob.data(), blob.size());
 	file.close();
 	if (!success)
 	{
