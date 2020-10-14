@@ -15,12 +15,15 @@ struct ShaderEditorPlugin final : public StudioApp::GUIPlugin
 		: m_shader_editor(app.getWorldEditor().getAllocator())
 		, m_app(app)
 	{
-		Action* action = LUMIX_NEW(app.getWorldEditor().getAllocator(), Action)(
-			"Shader Editor", "Toggle shader editor", "shaderEditor");
-		action->func.bind<&ShaderEditorPlugin::onAction>(this);
-		action->is_selected.bind<&ShaderEditorPlugin::isOpen>(this);
-		app.addWindowAction(action);
+		m_toggle_ui.init("Shader Editor", "Toggle shader editor", "shaderEditor", "", true);
+		m_toggle_ui.func.bind<&ShaderEditorPlugin::onAction>(this);
+		m_toggle_ui.is_selected.bind<&ShaderEditorPlugin::isOpen>(this);
+		app.addWindowAction(&m_toggle_ui);
 		m_shader_editor.m_is_open = false;
+	}
+
+	~ShaderEditorPlugin() {
+		m_app.removeAction(&m_toggle_ui);
 	}
 
 
@@ -39,6 +42,7 @@ struct ShaderEditorPlugin final : public StudioApp::GUIPlugin
 
 	StudioApp& m_app;
 	ShaderEditor m_shader_editor;
+	Action m_toggle_ui;
 };
 
 
