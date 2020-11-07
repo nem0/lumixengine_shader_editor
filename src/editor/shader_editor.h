@@ -143,6 +143,7 @@ private:
 	ImVec2 m_canvas_pos;
 	float m_left_col_width = 100;
 	String m_source;
+	float m_scale = 1.f;
 };
 
 

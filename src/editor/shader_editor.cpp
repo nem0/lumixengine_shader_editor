@@ -2,6 +2,7 @@
 #include "shader_editor.h"
 #include "editor/utils.h"
 #include "engine/crc32.h"
+#include "engine/crt.h"
 #include "engine/log.h"
 #include "engine/math.h"
 #include "engine/os.h"
@@ -9,7 +10,7 @@
 #include "engine/stream.h"
 #include "engine/string.h"
 #include "renderer/model.h"
-#include <cstdio>
+#include <math.h>
 
 
 namespace Lumix
@@ -468,9 +469,7 @@ void ShaderEditor::Node::generateRecursive(OutputMemoryStream& blob)
 
 void ShaderEditor::Node::onNodeGUI()
 {
-	ImGui::PushItemWidth(120);
 	onGUI();
-	ImGui::PopItemWidth();
 }
 
 
@@ -2058,33 +2057,45 @@ static ImVec2 operator-(const ImVec2& a, const ImVec2& b)
 void ShaderEditor::onGUIRightColumn()
 {
 	ImGui::BeginChild("right_col");
-
-	if(ImGui::IsWindowHovered() && !ImGui::IsAnyItemActive() && ImGui::IsMouseDragging(2, 0.0f))
-	{
-		m_canvas_pos = m_canvas_pos + ImGui::GetIO().MouseDelta;
-	}
-
+	
 	int current_shader = (int)m_current_shader_type;
 	if(ImGui::Combo("Shader", &current_shader, "Vertex\0Fragment\0"))
 	{
 		m_current_shader_type = (ShaderType)current_shader;
 	}
 
-	auto cursor_screen_pos = ImGui::GetCursorScreenPos();
+	ImGui::BeginChild("canvas");
+
+	if(ImGui::IsWindowHovered() && !ImGui::IsAnyItemActive() && ImGui::IsMouseDragging(2, 0.0f))
+	{
+		m_canvas_pos = m_canvas_pos + ImGui::GetIO().MouseDelta;
+	}
+
+	const ImGuiStyle normal_style = ImGui::GetStyle();
+    ImGuiIO& io = ImGui::GetIO();
+	if (io.MouseWheel != 0.0f && io.KeyCtrl) {
+        m_scale = clamp(m_scale + io.MouseWheel * 0.10f, 0.20f, 2.0f);
+		ImGui::GetStyle().ScaleAllSizes(m_scale);
+	}
+	ImGui::SetWindowFontScale(m_scale);
+
+	const ImVec2 cursor_screen_pos = ImGui::GetCursorScreenPos();
 
 	auto& nodes = m_current_shader_type == ShaderType::FRAGMENT ? m_fragment_nodes : m_vertex_nodes;
 	for(auto* node : nodes)
 	{
-		auto node_screen_pos = cursor_screen_pos + node->m_pos + m_canvas_pos;
+		ImVec2 node_screen_pos = cursor_screen_pos + (node->m_pos + m_canvas_pos) * m_scale;
 
 		ImGui::BeginNode(node->m_id, node_screen_pos);
+		ImGui::PushItemWidth(120 * m_scale);
 		node->onNodeGUI();
+		ImGui::PopItemWidth();
 		ImGui::EndNode(node_screen_pos);
 		if(ImGui::IsItemHovered() && ImGui::IsMouseDown(1))
 		{
 			m_current_node_id = node->m_id;
 		}
-
+		
 		for(int i = 0; i < node->m_outputs.size(); ++i)
 		{
 			Node* output = node->m_outputs[i];
@@ -2120,9 +2131,9 @@ void ShaderEditor::onGUIRightColumn()
 				if(ImGui::IsMouseClicked(0)) nodePinMouseDown(node, i, true);
 			}
 		}
-
-		ImVec2 new_pos = node_screen_pos - cursor_screen_pos - m_canvas_pos;
-		if(new_pos.x != node->m_pos.x || new_pos.y != node->m_pos.y)
+		
+		ImVec2 new_pos = (node_screen_pos - cursor_screen_pos) * (1 / m_scale) - m_canvas_pos;
+		if(fabs(new_pos.x - node->m_pos.x) > 0.01f || fabs(new_pos.y - node->m_pos.y) > 0.01f)
 		{
 			execute(LUMIX_NEW(m_allocator, MoveNodeCommand)(node->m_id, new_pos, *this));
 		}
@@ -2183,6 +2194,9 @@ void ShaderEditor::onGUIRightColumn()
 
 		ImGui::EndPopup();
 	}
+
+	ImGui::GetStyle() = normal_style;
+	ImGui::EndChild();
 	ImGui::EndChild();
 }
 
