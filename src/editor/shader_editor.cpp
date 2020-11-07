@@ -2075,8 +2075,8 @@ void ShaderEditor::onGUIRightColumn()
     ImGuiIO& io = ImGui::GetIO();
 	if (io.MouseWheel != 0.0f && io.KeyCtrl) {
         m_scale = clamp(m_scale + io.MouseWheel * 0.10f, 0.20f, 2.0f);
-		ImGui::GetStyle().ScaleAllSizes(m_scale);
 	}
+	ImGui::GetStyle().ScaleAllSizes(m_scale);
 	ImGui::SetWindowFontScale(m_scale);
 
 	const ImVec2 cursor_screen_pos = ImGui::GetCursorScreenPos();
