@@ -18,8 +18,22 @@ struct OutputMemoryStream;
 class ShaderEditor
 {
 public:
-	struct ICommand;
+	struct Link {
+		u32 from;
+		u32 to;
+	};
 
+	struct Node;
+
+	struct Stage {
+		Stage(IAllocator& allocator) 
+			: nodes(allocator)
+			, links(allocator)
+		{}
+
+		Array<Node*> nodes;
+		Array<Link> links;
+	};
 
 	enum class ShaderType
 	{
@@ -50,30 +64,24 @@ public:
 	struct Node
 	{
 		Node(int type, ShaderEditor& editor);
+		virtual ~Node() {}
 
-		virtual void save(OutputMemoryStream& /*blob*/) {}
-		virtual void load(InputMemoryStream& /*blob*/) {}
-		virtual void generate(OutputMemoryStream& /*blob*/) {}
-		virtual void printReference(OutputMemoryStream& blob, Node* output);
-		virtual void generateBeforeMain(OutputMemoryStream& /*blob*/) {}
-		virtual ValueType getOutputType(int /*index*/) const { return ValueType::FLOAT; }
-		virtual ~Node();
+		virtual void save(OutputMemoryStream&blob) {}
+		virtual void load(InputMemoryStream&blob) {}
+		virtual void generate(OutputMemoryStream&blob, const Stage& stage) const {}
+		virtual void printReference(OutputMemoryStream& blob, const ShaderEditor::Stage& stage, int output_idx) const;
+		virtual void generateBeforeMain(OutputMemoryStream&blob) const {}
+		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
+		virtual ValueType getInputType(int index) const { return ValueType::FLOAT; }
+		virtual void onGUI(Stage& stage) = 0;
 
-
-		ValueType getInputType(int index) const;
-		void generateRecursive(OutputMemoryStream& blob);
-		void onNodeGUI();
-
-		ImGuiID m_id;
+		u16 m_id;
 		ImVec2 m_pos;
 
-		Array<Node*> m_inputs;
-		Array<Node*> m_outputs;
 		int m_type;
 		ShaderEditor& m_editor;
 
 	protected:
-		virtual void onGUI() = 0;
 	};
 
 public:
@@ -94,6 +102,7 @@ public:
 	bool hasFocus() const { return m_is_focused; }
 	void undo();
 	void redo();
+	void saveUndo();
 
 public:
 	static const int MAX_TEXTURES_COUNT = 16;
@@ -106,11 +115,9 @@ private:
 	void newGraph();
 	void save(const char* path);
 	void load();
-	void execute(ICommand* command);
 	bool canUndo() const;
 	bool canRedo() const;
 
-	void nodePinMouseDown(Node* node, int pin_index, bool is_input);
 	void createConnection(Node* node, int pin_index, bool is_input);
 	bool getSavePath();
 	void clear();
@@ -119,28 +126,17 @@ private:
 	void onGUIMenu();
 
 private:
-	struct NewLinkInfo
-	{
-		bool is_active;
-		Node* from;
-		int from_pin_index;
-		bool is_from_input;
-		ImVec2 pos_offset;
-	} m_new_link_info;
-
-private:
 	StaticString<50> m_textures[MAX_TEXTURES_COUNT];
 	Path m_path;
 	int m_last_node_id;
 	int m_undo_stack_idx;
-	Array<ICommand*> m_undo_stack;
-	Array<Node*> m_fragment_nodes;
-	Array<Node*> m_vertex_nodes;
+	Array<OutputMemoryStream> m_undo_stack;
+	Stage m_vertex_stage;
+	Stage m_fragment_stage;
+	int m_context_link = -1;
+	int m_hovered_link = -1;
 	IAllocator& m_allocator;
-	int m_current_node_id;
-	ShaderType m_current_shader_type;
 	bool m_is_focused;
-	ImVec2 m_canvas_pos;
 	float m_left_col_width = 100;
 	String m_source;
 	float m_scale = 1.f;
