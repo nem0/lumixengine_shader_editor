@@ -1377,11 +1377,15 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 		StaticString<MAX_PATH_LENGTH> path(fi.m_dir, fi.m_basename, ".shd");
 		OS::OutputFile file;
 		if (!file.open(path)) {
-			logError("Editor") << "Could not create file " << path;
+			logError("Could not create file ", path);
 			return;
 		}
 
-		file.write(blob.data(), blob.size());
+		if (!file.write(blob.data(), blob.size())) {
+			file.close();
+			logError("Could not write ", path);
+			return;
+		}
 		file.close();
 	}
 
@@ -1411,7 +1415,7 @@ void ShaderEditor::saveNode(OutputMemoryStream& blob, Node& node)
 void ShaderEditor::save(const char* path) {
 	OS::OutputFile file;
 	if(!file.open(path)) {
-		logError("Editor") << "Could not save shader " << path;
+		logError("Could not save shader ", path);
 		return;
 	}
 
@@ -1421,7 +1425,7 @@ void ShaderEditor::save(const char* path) {
 	bool success = file.write(blob.data(), blob.size());
 	file.close();
 	if (!success) {
-		logError("Editor") << "Could not save shader " << path;
+		logError("Could not save shader ", path);
 	}
 }
 
@@ -1504,7 +1508,7 @@ void ShaderEditor::load() {
 
 	OS::InputFile file;
 	if (!file.open(path)) {
-		logError("Editor") << "Failed to load shader " << path;
+		logError("Failed to load shader ", path);
 		return;
 	}
 
@@ -1512,7 +1516,7 @@ void ShaderEditor::load() {
 	Array<u8> data(m_allocator);
 	data.resize(data_size);
 	if (!file.read(&data[0], data_size)) {
-		logError("Editor") << "Failed to load shader " << path;
+		logError("Failed to load shader ", path);
 		file.close();
 		return;
 	}
