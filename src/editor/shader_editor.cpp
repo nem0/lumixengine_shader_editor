@@ -1787,7 +1787,7 @@ void ShaderEditor::onGUI()
 		onGUILeftColumn();
 		ImVec2 size(m_left_col_width, 0);
 		ImGui::SameLine();
-		ImGui::VSplitter("vsplit", &size);
+		ImGuiEx::VSplitter("vsplit", &size);
 		m_left_col_width = size.x;
 		ImGui::SameLine();
 		onGUIRightColumn();
