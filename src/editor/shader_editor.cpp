@@ -1375,7 +1375,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	if (save_file) {
 		PathInfo fi(sed_path);
 		StaticString<MAX_PATH_LENGTH> path(fi.m_dir, fi.m_basename, ".shd");
-		OS::OutputFile file;
+		os::OutputFile file;
 		if (!file.open(path)) {
 			logError("Could not create file ", path);
 			return;
@@ -1413,7 +1413,7 @@ void ShaderEditor::saveNode(OutputMemoryStream& blob, Node& node)
 }
 
 void ShaderEditor::save(const char* path) {
-	OS::OutputFile file;
+	os::OutputFile file;
 	if(!file.open(path)) {
 		logError("Could not save shader ", path);
 		return;
@@ -1501,12 +1501,12 @@ ShaderEditor::Node& ShaderEditor::loadNode(InputMemoryStream& blob) {
 
 void ShaderEditor::load() {
 	char path[MAX_PATH_LENGTH];
-	if (!OS::getOpenFilename(Span(path), "Shader edit data\0*.sed\0", nullptr)) return;
+	if (!os::getOpenFilename(Span(path), "Shader edit data\0*.sed\0", nullptr)) return;
 	m_path = path;
 
 	clear();
 
-	OS::InputFile file;
+	os::InputFile file;
 	if (!file.open(path)) {
 		logError("Failed to load shader ", path);
 		return;
@@ -1551,7 +1551,7 @@ void ShaderEditor::load(InputMemoryStream& blob) {
 bool ShaderEditor::getSavePath()
 {
 	char path[MAX_PATH_LENGTH];
-	if (OS::getSaveFilename(Span(path), "Shader edit data\0*.sed\0", "sed"))
+	if (os::getSaveFilename(Span(path), "Shader edit data\0*.sed\0", "sed"))
 	{
 		m_path = path;
 		return true;
