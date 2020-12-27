@@ -1374,7 +1374,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 
 	if (save_file) {
 		PathInfo fi(sed_path);
-		StaticString<MAX_PATH_LENGTH> path(fi.m_dir, fi.m_basename, ".shd");
+		StaticString<LUMIX_MAX_PATH> path(fi.m_dir, fi.m_basename, ".shd");
 		os::OutputFile file;
 		if (!file.open(path)) {
 			logError("Could not create file ", path);
@@ -1500,7 +1500,7 @@ ShaderEditor::Node& ShaderEditor::loadNode(InputMemoryStream& blob) {
 }
 
 void ShaderEditor::load() {
-	char path[MAX_PATH_LENGTH];
+	char path[LUMIX_MAX_PATH];
 	if (!os::getOpenFilename(Span(path), "Shader edit data\0*.sed\0", nullptr)) return;
 	m_path = path;
 
@@ -1550,7 +1550,7 @@ void ShaderEditor::load(InputMemoryStream& blob) {
 
 bool ShaderEditor::getSavePath()
 {
-	char path[MAX_PATH_LENGTH];
+	char path[LUMIX_MAX_PATH];
 	if (os::getSaveFilename(Span(path), "Shader edit data\0*.sed\0", "sed"))
 	{
 		m_path = path;
@@ -1776,7 +1776,7 @@ void ShaderEditor::onGUIMenu()
 void ShaderEditor::onGUI()
 {
 	if (!m_is_open) return;
-	StaticString<MAX_PATH_LENGTH + 25> title("Shader Editor");
+	StaticString<LUMIX_MAX_PATH + 25> title("Shader Editor");
 	if (m_path.isValid()) title << " - " << m_path.c_str();
 	title << "###Shader Editor";
 	if (ImGui::Begin(title, &m_is_open, ImGuiWindowFlags_MenuBar))
