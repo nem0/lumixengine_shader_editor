@@ -1754,9 +1754,9 @@ void ShaderEditor::onGUIMenu()
 		if(ImGui::BeginMenu("File")) {
 			if (ImGui::MenuItem("New")) newGraph();
 			if (ImGui::MenuItem("Open")) load();
-			if (ImGui::MenuItem("Save", nullptr, false, m_path.isValid())) save(m_path.c_str());
+			if (ImGui::MenuItem("Save", nullptr, false, !m_path.isEmpty())) save(m_path.c_str());
 			if (ImGui::MenuItem("Save as")) {
-				if(getSavePath() && m_path.isValid()) save(m_path.c_str());
+				if(getSavePath() && !m_path.isEmpty()) save(m_path.c_str());
 			}
 			ImGui::EndMenu();
 		}
@@ -1765,7 +1765,7 @@ void ShaderEditor::onGUIMenu()
 			if (ImGui::MenuItem("Redo", nullptr, false, canRedo())) redo();
 			ImGui::EndMenu();
 		}
-		if (ImGui::MenuItem("Generate & save", nullptr, false, m_path.isValid())) {
+		if (ImGui::MenuItem("Generate & save", nullptr, false, !m_path.isEmpty())) {
 			generate(m_path.c_str(), true);
 		}
 
@@ -1777,7 +1777,7 @@ void ShaderEditor::onGUI()
 {
 	if (!m_is_open) return;
 	StaticString<LUMIX_MAX_PATH + 25> title("Shader Editor");
-	if (m_path.isValid()) title << " - " << m_path.c_str();
+	if (!m_path.isEmpty()) title << " - " << m_path.c_str();
 	title << "###Shader Editor";
 	if (ImGui::Begin(title, &m_is_open, ImGuiWindowFlags_MenuBar))
 	{
