@@ -10,7 +10,7 @@
 #include "engine/stream.h"
 #include "engine/string.h"
 #include "renderer/model.h"
-#include "imnodes.h"
+#include "imgui/imnodes.h"
 #include "imgui/IconsFontAwesome5.h"
 #include <math.h>
 
@@ -1332,7 +1332,6 @@ ShaderEditor::ShaderEditor(IAllocator& allocator)
 	, m_is_open(false)
 {
 	newGraph();
-	imnodes::Initialize();
 }
 
 
