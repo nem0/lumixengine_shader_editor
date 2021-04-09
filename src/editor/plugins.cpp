@@ -33,10 +33,10 @@ struct ShaderEditorPlugin final : public StudioApp::GUIPlugin
 	bool hasFocus() override { return m_shader_editor.hasFocus(); }
 	bool isOpen() const { return m_shader_editor.m_is_open; }
 	void onSettingsLoaded() override {
-		m_shader_editor.m_is_open = m_app.getSettings().getValue("is_shader_editor_open", false);
+		m_shader_editor.m_is_open = m_app.getSettings().getValue(Settings::GLOBAL, "is_shader_editor_open", false);
 	}
 	void onBeforeSettingsSaved() override {
-		m_app.getSettings().setValue("is_shader_editor_open", m_shader_editor.m_is_open);
+		m_app.getSettings().setValue(Settings::GLOBAL, "is_shader_editor_open", m_shader_editor.m_is_open);
 	}
 
 
