@@ -31,10 +31,11 @@ include "pipelines/common.glsl"
 
 define "ALPHA_CUTOUT"
 define "VEGETATION"
+uniform("Stiffness", "float", 10)
 
 common [[
 	#ifdef SKINNED
-			layout(std140, binding = 4) uniform ModelState {
+		layout(std140, binding = 4) uniform ModelState {
 			float layer;
 			float fur_scale;
 			float fur_gravity;
@@ -43,13 +44,21 @@ common [[
 			mat4 bones[256];
 		} Model;
 	#endif
+
+	#if defined _HAS_ATTR6 && !defined GRASS
+		#define HAS_LOD
+	#endif
 ]]
 
 vertex_shader [[
 	layout(location = 0) in vec3 a_position;
-	layout(location = 1) in vec2 a_uv;
+	#ifdef _HAS_ATTR1
+		layout(location = 1) in vec2 a_uv;
+	#else
+		const vec2 a_uv = vec2(0);
+	#endif
 	layout(location = 2) in vec3 a_normal;
-	#ifdef _HAS_ATTR3 
+	#ifdef _HAS_ATTR3
 		layout(location = 3) in vec3 a_tangent;
 	#else 
 		const vec3 a_tangent = vec3(0, 1, 0);
@@ -60,7 +69,18 @@ vertex_shader [[
 	#elif defined INSTANCED || defined GRASS
 		layout(location = 4) in vec4 i_rot_quat;
 		layout(location = 5) in vec4 i_pos_scale;
-		layout(location = 6) in float i_lod;
+		#ifdef HAS_LOD
+			layout(location = 6) in float i_lod;
+			layout(location = 4) out float v_lod;
+		#endif
+		#ifdef _HAS_ATTR7
+			layout(location = 7) in vec4 a_color;
+			layout(location = 6) out vec4 v_color;
+		#endif
+		#ifdef _HAS_ATTR8
+			layout(location = 8) in float a_ao;
+			layout(location = 7) out float v_ao;
+		#endif
 	#else
 		layout(std140, binding = 4) uniform ModelState {
 			mat4 matrix;
@@ -71,26 +91,38 @@ vertex_shader [[
 	layout(location = 1) out vec3 v_normal;
 	layout(location = 2) out vec3 v_tangent;
 	layout(location = 3) out vec4 v_wpos;
-	layout(location = 4) out float v_lod;
 	#ifdef GRASS
 		layout(location = 5) out float v_darken;
 	#endif
 	
 	void main() {
-		v_lod = 0;
+		#ifdef HAS_LOD
+			v_lod = 0;
+		#endif
 		v_uv = a_uv;
 		#if defined INSTANCED || defined GRASS
 			v_normal = rotateByQuat(i_rot_quat, a_normal);
 			v_tangent = rotateByQuat(i_rot_quat, a_tangent);
 			vec3 p = a_position * i_pos_scale.w;
-			v_lod = i_lod;
-			#if defined GRASS || defined VEGETATION
-				p = vegetationAnim(i_pos_scale.xyz, p);
+			#ifdef HAS_LOD
+				v_lod = i_lod;
+			#endif
+			#if defined GRASS && defined VEGETATION
+				p = vegetationAnim(i_pos_scale.xyz, p, 1 / (1.0 + u_stiffness));
+				v_darken = a_position.y > 0.1 ? 1 : 0.0;
+			#elif defined VEGETATION
+				#ifdef DEPTH
+					p = vegetationAnim(i_pos_scale.xyz - Pass.shadow_to_camera.xyz, p, 0.001);
+				#else
+					p = vegetationAnim(i_pos_scale.xyz, p, 0.001);
+				#endif
 			#endif
 			v_wpos = vec4(i_pos_scale.xyz + rotateByQuat(i_rot_quat, p), 1);
-			#ifdef GRASS
-				v_darken = a_position.y > 0.1 ? 1 : 0.0;
-				v_normal = rotateByQuat(i_rot_quat, normalize(a_position));
+			#ifdef _HAS_ATTR7
+				v_color = a_color;
+			#endif
+			#ifdef _HAS_ATTR8
+				v_ao = a_ao;
 			#endif
 		#elif defined SKINNED
 			mat4 model_mtx = Model.matrix * (a_weights.x * Model.bones[a_indices.x] + 
@@ -111,7 +143,7 @@ vertex_shader [[
 
 			vec3 p = a_position;
 			#ifdef VEGETATION
-				p = vegetationAnim(Model.matrix[3].xyz, p);
+				p = vegetationAnim(Model.matrix[3].xyz, p, 0.001);
 			#endif
 
 			v_wpos = model_mtx * vec4(p,  1);
@@ -127,16 +159,27 @@ fragment_shader [[
 )#";
 
 static constexpr char* PROLOGUE_FS2 = R"#(
-	layout (binding=4) uniform sampler2D u_shadowmap;
-	layout (binding=5) uniform sampler2D u_shadow_atlas;
-
+	layout (binding=5) uniform sampler2D u_shadowmap;
+	#if !defined DEPTH && !defined DEFERRED && !defined GRASS
+		layout (binding=6) uniform sampler2D u_shadow_atlas;
+		layout (binding=7) uniform samplerCubeArray u_reflection_probes;
+	#endif
+	
 	layout(location = 0) in vec2 v_uv;
 	layout(location = 1) in vec3 v_normal;
 	layout(location = 2) in vec3 v_tangent;
 	layout(location = 3) in vec4 v_wpos;
-	layout(location = 4) in float v_lod;
+	#ifdef HAS_LOD
+		layout(location = 4) in float v_lod;
+	#endif
 	#ifdef GRASS
-		layout(location = 5) out float v_darken;
+		layout(location = 5) in float v_darken;
+	#endif
+	#ifdef _HAS_ATTR7
+		layout(location = 6) in vec4 v_color;
+	#endif
+	#ifdef _HAS_ATTR8
+		layout(location = 7) in float v_ao;
 	#endif
 
 	#if defined DEFERRED || defined GRASS
@@ -147,11 +190,14 @@ static constexpr char* PROLOGUE_FS2 = R"#(
 		layout(location = 0) out vec4 o_color;
 	#endif
 
-	Surface getSurface() {
+	Surface getSurface()
+	{
+
 		Surface data;
 )#";
 
 static constexpr char* EPILOGUE = R"#(
+		data.V = normalize(-data.wpos);
 		return data;
 	}
 	
@@ -167,6 +213,9 @@ static constexpr char* EPILOGUE = R"#(
 		void main()
 		{
 			Surface data = getSurface();
+			#if defined ALPHA_CUTOUT && defined LUMIX_DX_SHADER
+				if(data.alpha < 0.5) discard;
+			#endif
 			packSurface(data, o_gbuffer0, o_gbuffer1, o_gbuffer2);
 		}
 	#else 
@@ -176,8 +225,14 @@ static constexpr char* EPILOGUE = R"#(
 			
 			float linear_depth = dot(data.wpos.xyz, Pass.view_dir.xyz);
 			Cluster cluster = getClusterLinearDepth(linear_depth);
-			o_color.rgb = computeLighting(cluster, data, Global.light_dir.xyz, Global.light_color.rgb * Global.light_intensity, u_shadowmap, u_shadow_atlas);
-			o_color.a = data.alpha;
+			o_color.rgb = computeLighting(cluster, data, Global.light_dir.xyz, Global.light_color.rgb * Global.light_intensity, u_shadowmap, u_shadow_atlas, u_reflection_probes);
+
+			#if defined ALPHA_CUTOUT
+				if(data.alpha < 0.5) discard;
+			#endif
+
+			float ndotv = abs(dot(data.N , data.V)) + 1e-5f;
+			o_color.a = mix(data.alpha, 1, pow(saturate(1 - ndotv), 5));
 		}
 	#endif
 ]]
@@ -1032,24 +1087,24 @@ struct PBRNode : public ShaderEditor::Node
 
 	void generate(OutputMemoryStream& blob) const override {
 		const char* fields[] = {
-			"albedo", "N", "roughness", "metallic", "emission"
+			"wpos", "albedo", "alpha", "N", "roughness", "metallic", "emission", "ao", "translucency"
 		};
 
 		for (const char*& field : fields) {
 			const int i = int(&field - fields);
-			Input input = getInput(m_editor, m_id, i + 1);
+			Input input = getInput(m_editor, m_id, i);
 			if (input) {
 				input.node->generate(blob);
 
 				blob << "\t\tdata." << field << " = ";
 				input.printReference(blob);
 				const ShaderEditor::ValueType type = input.node->getOutputType(input.output_idx);
-				if (type == ShaderEditor::ValueType::VEC4 && i == 0) blob << ".xyz";
+				if (type == ShaderEditor::ValueType::VEC4 && i <= 1) blob << ".xyz";
 				blob << ";\n";
 			}
 		}
 
-		const Input input = getInput(m_editor, m_id, 6);
+		const Input input = getInput(m_editor, m_id, 9);
 		if (input) {
 			input.node->generate(blob);
 			
@@ -1073,22 +1128,34 @@ struct PBRNode : public ShaderEditor::Node
 		imnodes::EndInputAttribute();
 
 		imnodes::BeginInputAttribute(m_id | (2 << 16));
-		ImGui::TextUnformatted("Normal");
+		ImGui::TextUnformatted("Alpha");
 		imnodes::EndInputAttribute();
 
 		imnodes::BeginInputAttribute(m_id | (3 << 16));
-		ImGui::TextUnformatted("Roughness");
+		ImGui::TextUnformatted("Normal");
 		imnodes::EndInputAttribute();
 
 		imnodes::BeginInputAttribute(m_id | (4 << 16));
-		ImGui::TextUnformatted("Metallic");
+		ImGui::TextUnformatted("Roughness");
 		imnodes::EndInputAttribute();
 
 		imnodes::BeginInputAttribute(m_id | (5 << 16));
-		ImGui::TextUnformatted("Emission");
+		ImGui::TextUnformatted("Metallic");
 		imnodes::EndInputAttribute();
 
 		imnodes::BeginInputAttribute(m_id | (6 << 16));
+		ImGui::TextUnformatted("Emission");
+		imnodes::EndInputAttribute();
+
+		imnodes::BeginInputAttribute(m_id | (7 << 16));
+		ImGui::TextUnformatted("AO");
+		imnodes::EndInputAttribute();
+
+		imnodes::BeginInputAttribute(m_id | (8 << 16));
+		ImGui::TextUnformatted("Translucency");
+		imnodes::EndInputAttribute();
+
+		imnodes::BeginInputAttribute(m_id | (9 << 16));
 		ImGui::TextUnformatted("Discard");
 		imnodes::EndInputAttribute();
 
