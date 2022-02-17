@@ -10,7 +10,6 @@
 #include "engine/stream.h"
 #include "engine/string.h"
 #include "renderer/model.h"
-#include "imgui/imnodes.h"
 #include "imgui/IconsFontAwesome5.h"
 #include <math.h>
 
@@ -506,21 +505,17 @@ struct MultiplyNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
-		imnodes::EndOutputAttribute();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 
-		imnodes::BeginInputAttribute(m_id);
-		ImGui::Text("A");
-		imnodes::EndInputAttribute();
+		ImGuiEx::Pin(m_id, true); ImGui::Text("A");
 
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
+		ImGuiEx::Pin(m_id | (1 << 16), true);
 		if (isInputConnected(m_editor, m_id, 1)) {
 			ImGui::Text("B");
 		}
 		else {
 			ImGui::DragFloat("B", &b_val);
 		}
-		imnodes::EndInputAttribute();
 
 		return false;
 	}
@@ -611,21 +606,19 @@ struct OperatorNode : public ShaderEditor::Node {
 			return true;
 		};
 
-		imnodes::BeginInputAttribute(m_id);
-		ImGui::Text("A");
-		imnodes::EndInputAttribute();
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true); ImGui::Text("A");
+		ImGuiEx::Pin(m_id | (1 << 16), true); ImGui::Text("B");
+		ImGui::EndGroup();
 
+		ImGui::SameLine();
 		bool res = false;
-		imnodes::BeginOutputAttribute(u32(m_id) | OUTPUT_FLAG);
+		ImGuiEx::Pin(u32(m_id) | OUTPUT_FLAG, false);
 		if (ImGui::Combo("Op", &o, getter, nullptr, (int)Operation::COUNT)) {
 			m_operation = (Operation)o;
 			res = true;
 		}
-		imnodes::EndOutputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
-		ImGui::Text("B");
-		imnodes::EndInputAttribute();
 		return res;
 	}
 
@@ -663,12 +656,11 @@ struct SwizzleNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginInputAttribute(m_id);
+		ImGuiEx::Pin(m_id, true);
 		bool res = ImGui::InputTextWithHint("", "swizzle", m_swizzle.data, sizeof(m_swizzle.data));
-		imnodes::EndInputAttribute();
+
 		ImGui::SameLine();
-		imnodes::BeginOutputAttribute(u32(m_id) | OUTPUT_FLAG);
-		imnodes::EndOutputAttribute();
+		ImGuiEx::Pin(u32(m_id) | OUTPUT_FLAG, false);
 		return res;
 	}
 
@@ -732,8 +724,9 @@ struct Vec4Node : public ShaderEditor::Node
 
 	bool onGUI() override
 	{
+		ImGui::BeginGroup();
 		for (i32 i = 0; i < 4; ++i) {
-			imnodes::BeginInputAttribute(m_id | (i << 16));
+			ImGuiEx::Pin(m_id | (i << 16), true);
 			const char* labels[] = { "x", "y", "z", "w" };
 			if (isInputConnected(m_editor, m_id, i)) {
 				ImGui::TextUnformatted(labels[i]);
@@ -741,13 +734,13 @@ struct Vec4Node : public ShaderEditor::Node
 			else {
 				ImGui::DragFloat(labels[i], &value.x);	
 			}
-			imnodes::EndInputAttribute();
 		}
+		ImGui::EndGroup();
 
+		ImGui::SameLine();
 
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::TextUnformatted("xyzw");
-		imnodes::EndOutputAttribute();
 		return false;
 	}
 
@@ -780,17 +773,18 @@ struct FunctionCallNode : public ShaderEditor::Node
 
 
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
-		imnodes::EndOutputAttribute();
 
-		imnodes::BeginInputAttribute(m_id);
+		ImGuiEx::Pin(m_id, true);
 		auto getter = [](void* data, int idx, const char** out_text) -> bool {
 			*out_text = FUNCTIONS[idx];
 			return true;
 		};
 		ImGui::SetNextItemWidth(120);
 		bool res = ImGui::Combo("##fn", &m_function, getter, nullptr, lengthOf(FUNCTIONS));
-		imnodes::EndInputAttribute();
+		
+		ImGui::SameLine();
+
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		return res;
 	}
 
@@ -839,21 +833,18 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 
 
 	bool onGUI() override {
-		imnodes::BeginInputAttribute(m_id);
-		ImGui::Text("argument 1");
-		imnodes::EndInputAttribute();
-		
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
-		ImGui::Text("argument 2");
-		imnodes::EndInputAttribute();
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true); ImGui::Text("argument 1");
+		ImGuiEx::Pin(m_id | (1 << 16), true); ImGui::Text("argument 2");
+		ImGui::EndGroup();
 
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGui::SameLine();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		auto getter = [](void* data, int idx, const char** out_text) -> bool {
 			*out_text = BINARY_FUNCTIONS[idx].name;
 			return true;
 		};
 		bool res = ImGui::Combo("Function", &m_function, getter, nullptr, lengthOf(BINARY_FUNCTIONS));
-		imnodes::EndOutputAttribute();
 		return res;
 	}
 
@@ -874,9 +865,8 @@ struct NormalNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::Text("Normal");
-		imnodes::EndOutputAttribute();
 		return false;
 	}
 };
@@ -895,9 +885,8 @@ struct PositionNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::Text("Position");
-		imnodes::EndOutputAttribute();
 		return false;
 	}
 };
@@ -963,7 +952,7 @@ struct ConstNode : public ShaderEditor::Node
 	}
 	
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		auto getter = [](void*, int idx, const char** out){
 			*out = toString((ShaderEditor::ValueType)idx);
 			return true;
@@ -1002,7 +991,6 @@ struct ConstNode : public ShaderEditor::Node
 				break;
 			default: ASSERT(false); break;
 		}
-		imnodes::EndOutputAttribute();
 		return res;
 	}
 
@@ -1039,17 +1027,16 @@ struct SampleNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginInputAttribute(m_id);
+		ImGuiEx::Pin(m_id, true);
 		ImGui::Text("UV");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGui::SameLine();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		auto getter = [](void* data, int idx, const char** out) -> bool {
 			*out = ((SampleNode*)data)->m_editor.getTextureName(idx);
 			return true;
 		};
 		bool res = ImGui::Combo("Texture", &m_texture, getter, this, ShaderEditor::MAX_TEXTURES_COUNT);
-		imnodes::EndOutputAttribute();
 		return res;
 	}
 
@@ -1115,49 +1102,37 @@ struct PBRNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginNodeTitleBar();
 		ImGui::Text("PBR");
-		imnodes::EndNodeTitleBar();
 		
-		imnodes::BeginInputAttribute(m_id);
+		ImGuiEx::Pin(m_id, true);
 		ImGui::TextUnformatted("Vertex position");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
+		ImGuiEx::Pin(m_id | (1 << 16), true);
 		ImGui::TextUnformatted("Albedo");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (2 << 16));
+		ImGuiEx::Pin(m_id | (2 << 16), true);
 		ImGui::TextUnformatted("Alpha");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (3 << 16));
+		ImGuiEx::Pin(m_id | (3 << 16), true);
 		ImGui::TextUnformatted("Normal");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (4 << 16));
+		ImGuiEx::Pin(m_id | (4 << 16), true);
 		ImGui::TextUnformatted("Roughness");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (5 << 16));
+		ImGuiEx::Pin(m_id | (5 << 16), true);
 		ImGui::TextUnformatted("Metallic");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (6 << 16));
+		ImGuiEx::Pin(m_id | (6 << 16), true);
 		ImGui::TextUnformatted("Emission");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (7 << 16));
+		ImGuiEx::Pin(m_id | (7 << 16), true);
 		ImGui::TextUnformatted("AO");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (8 << 16));
+		ImGuiEx::Pin(m_id | (8 << 16), true);
 		ImGui::TextUnformatted("Translucency");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (9 << 16));
+		ImGuiEx::Pin(m_id | (9 << 16), true);
 		ImGui::TextUnformatted("Discard");
-		imnodes::EndInputAttribute();
 
 		return false;
 	}
@@ -1192,21 +1167,19 @@ struct MixNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
-		imnodes::EndOutputAttribute();
-
-		imnodes::BeginInputAttribute(m_id);
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true);
 		ImGui::Text("Input 1");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
+		ImGuiEx::Pin(m_id | (1 << 16), true);
 		ImGui::Text("Input 2");
-		imnodes::EndInputAttribute();
 		
-		imnodes::BeginInputAttribute(m_id | (2 << 16));
+		ImGuiEx::Pin(m_id | (2 << 16), true);
 		ImGui::Text("Weight");
-		imnodes::EndInputAttribute();
+		ImGui::EndGroup();
 
+		ImGui::SameLine();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		return false;
 	}
 };
@@ -1239,17 +1212,17 @@ struct PassNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginInputAttribute(m_id);
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true);
 		ImGui::Text("if defined");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
+		ImGuiEx::Pin(m_id | (1 << 16), true);
 		ImGui::Text("if not defined");
-		imnodes::EndInputAttribute();
+		ImGui::EndGroup();
+		ImGui::SameLine();
 
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::InputText("Pass", m_pass, sizeof(m_pass));
-		imnodes::EndOutputAttribute();
 
 		return false;
 	}
@@ -1303,21 +1276,21 @@ struct IfNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginInputAttribute(m_id);
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true);
 		ImGui::Text("Condition");
-		imnodes::EndInputAttribute();
 		
-		imnodes::BeginInputAttribute(m_id | (1 << 16));
+		ImGuiEx::Pin(m_id | (1 << 16), true);
 		ImGui::Text("If");
-		imnodes::EndInputAttribute();
 
-		imnodes::BeginInputAttribute(m_id | (2 << 16));
+		ImGuiEx::Pin(m_id | (2 << 16), true);
 		ImGui::Text("Else");
-		imnodes::EndInputAttribute();
+		ImGui::EndGroup();
 
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGui::SameLine();
+
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::TextUnformatted("Output");
-		imnodes::EndOutputAttribute();
 
 		return false;
 	}
@@ -1342,9 +1315,8 @@ struct VertexIDNode : ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::Text("Vertex ID");
-		imnodes::EndOutputAttribute();
 		return false;
 	}
 };
@@ -1378,10 +1350,9 @@ struct BuiltinUniformNode : ShaderEditor::Node
 			*out_text = BUILTIN_UNIFORMS[index].gui_name;
 			return true;
 		};
-		imnodes::BeginOutputAttribute(m_id | OUTPUT_FLAG);
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		ImGui::SetNextItemWidth(120);
 		bool res = ImGui::Combo("##uniform", (int*)&m_uniform, getter, nullptr, lengthOf(BUILTIN_UNIFORMS));
-		imnodes::EndOutputAttribute();
 		return res;
 	}
 
@@ -1642,9 +1613,28 @@ void ShaderEditor::onGUIRightColumn()
 {
 	ImGui::BeginChild("right_col");
 	
-	imnodes::BeginNodeEditor();
+	static ImVec2 offset = ImVec2(0, 0);
+	ImGuiEx::BeginNodeEditor("shader_editor", &offset);
 		
-	if (imnodes::IsEditorHovered() && ImGui::IsMouseClicked(1)) {
+	for (Node*& node : m_nodes) {
+		ImGuiEx::BeginNode(node->m_id, node->m_pos);
+		if (node->onGUI()) {
+			saveUndo(node->m_id);
+		}
+		ImGuiEx::EndNode();
+	}
+
+	m_hovered_link = -1;
+	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
+		ImGuiEx::NodeLink(m_links[i].from | OUTPUT_FLAG, m_links[i].to);
+		if (ImGuiEx::IsLinkHovered()) {
+			m_hovered_link = i;
+		}
+	}
+
+	ImGuiEx::EndNodeEditor();
+
+	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
 		ImGui::OpenPopup("context_menu");
 		m_context_link = m_hovered_link;
 	}
@@ -1670,46 +1660,11 @@ void ShaderEditor::onGUIRightColumn()
 		}
 
 		ImGui::EndPopup();
-	}
-
-	const ImGuiStyle normal_style = ImGui::GetStyle();
-	ImGuiIO& io = ImGui::GetIO();
-	if (io.MouseWheel != 0.0f && io.KeyCtrl) {
-		m_scale = clamp(m_scale + io.MouseWheel * 0.10f, 0.20f, 2.0f);
-	}
-	ImGui::GetStyle().ScaleAllSizes(m_scale);
-	ImGui::SetWindowFontScale(m_scale);
-
-	const ImVec2 cursor_screen_pos = ImGui::GetCursorScreenPos();
-
-	for (Node*& node : m_nodes) {
-		imnodes::SetNodeEditorSpacePos(node->m_id, node->m_pos);
-		imnodes::BeginNode(node->m_id);
-		ImGui::PushItemWidth(120 * m_scale);
-		if (node->onGUI()) {
-			saveUndo(node->m_id);
-		}
-		ImGui::PopItemWidth();
-		imnodes::EndNode();
-	}
-
-	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
-		imnodes::Link(i, m_links[i].from | OUTPUT_FLAG, m_links[i].to);
-	}
-
-	ImGui::GetStyle() = normal_style;
-	imnodes::EndNodeEditor();
-		
-	for (Node* node : m_nodes) {
-		node->m_pos = imnodes::GetNodeEditorSpacePos(node->m_id);
-	}
-
-	m_hovered_link = -1;
-	imnodes::IsLinkHovered(&m_hovered_link);
+	}		
 
 	{
-		int start_attr, end_attr;
-		if (imnodes::IsLinkCreated(&start_attr, &end_attr)) {
+		ImGuiID start_attr, end_attr;
+		if (ImGuiEx::GetNewLink(&start_attr, &end_attr)) {
 			if (start_attr & OUTPUT_FLAG) {
 				m_links.push({u32(start_attr) & ~OUTPUT_FLAG, u32(end_attr)});
 			}
