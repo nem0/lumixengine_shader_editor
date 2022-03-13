@@ -1,7 +1,6 @@
 #define LUMIX_NO_CUSTOM_CRT
 #include "shader_editor.h"
 #include "editor/utils.h"
-#include "engine/crc32.h"
 #include "engine/crt.h"
 #include "engine/log.h"
 #include "engine/math.h"
