@@ -102,7 +102,6 @@ private:
 	int m_undo_stack_idx;
 	Array<Undo> m_undo_stack;
 	int m_context_link = -1;
-	int m_hovered_link = -1;
 	bool m_is_focused;
 	float m_left_col_width = 100;
 	String m_source;

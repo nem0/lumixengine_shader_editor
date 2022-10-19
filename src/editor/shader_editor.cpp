@@ -333,7 +333,7 @@ static const struct {
 	{"Normal", NodeType::NORMAL},
 	{"Mix", NodeType::MIX},
 	{"Sample", NodeType::SAMPLE},
-	{"Float constant", NodeType::FLOAT_CONSTANT},
+	{"Constant", NodeType::FLOAT_CONSTANT},
 	{"Vec4 constant", NodeType::VEC4_CONSTANT},
 	{"Vec4", NodeType::VEC4},
 	{"Swizzle", NodeType::SWIZZLE},
@@ -731,7 +731,7 @@ struct Vec4Node : public ShaderEditor::Node
 				ImGui::TextUnformatted(labels[i]);
 			}
 			else {
-				ImGui::DragFloat(labels[i], &value.x);	
+				ImGui::DragFloat(labels[i], &value.x + i);	
 			}
 		}
 		ImGui::EndGroup();
@@ -1623,57 +1623,64 @@ void ShaderEditor::onGUIRightColumn()
 		ImGuiEx::EndNode();
 	}
 
-	m_hovered_link = -1;
+	i32 hovered_link = -1;
 	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
 		ImGuiEx::NodeLink(m_links[i].from | OUTPUT_FLAG, m_links[i].to);
 		if (ImGuiEx::IsLinkHovered()) {
-			m_hovered_link = i;
+			hovered_link = i;
 		}
 	}
-
-	ImGuiEx::EndNodeEditor();
-
-	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
-		ImGui::OpenPopup("context_menu");
-		m_context_link = m_hovered_link;
-	}
-
-	if(ImGui::BeginPopup("context_menu")) {
-		if (m_context_link != -1 && ImGui::Selectable("Remove link")) {
-			m_links.erase(m_context_link);
-			m_context_link = -1;
-			saveUndo(0xffFF);
-		}
-
-		if (ImGui::BeginMenu("Add")) {
-			for (const auto& node_type : NODE_TYPES) {
-
-				if (ImGui::MenuItem(node_type.name)) {
-					Node* n = createNode((int)node_type.type);
-					n->m_id = ++m_last_node_id;
-					m_nodes.push(n);
-					saveUndo(0xffFF);
-				}
-			}
-			ImGui::EndMenu();
-		}
-
-		ImGui::EndPopup();
-	}		
 
 	{
 		ImGuiID start_attr, end_attr;
 		if (ImGuiEx::GetNewLink(&start_attr, &end_attr)) {
 			if (start_attr & OUTPUT_FLAG) {
 				m_links.push({u32(start_attr) & ~OUTPUT_FLAG, u32(end_attr)});
-			}
-			else {
+			} else {
 				m_links.push({u32(start_attr), u32(end_attr) & ~OUTPUT_FLAG});
 			}
 			saveUndo(0xffFF);
 		}
 	}
-	
+
+	ImGuiEx::EndNodeEditor();
+
+	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && ImGui::GetIO().KeyCtrl) {
+		m_links.erase(hovered_link);
+		saveUndo(0xffFF);
+	}
+
+	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
+		ImGui::OpenPopup("context_menu");
+		m_context_link = hovered_link;
+	}
+
+	if(ImGui::BeginPopup("context_menu")) {
+		if (m_context_link == -1) {
+			static char filter[64] = "";
+			ImGui::SetNextItemWidth(150);
+			ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
+			for (const auto& node_type : NODE_TYPES) {
+				if (!filter[0] || stristr(node_type.name, filter)) {
+					if (ImGui::MenuItem(node_type.name)) {
+						Node* n = createNode((int)node_type.type);
+						n->m_id = ++m_last_node_id;
+						m_nodes.push(n);
+						saveUndo(0xffFF);
+					}
+					}
+			}
+		}
+
+		if (m_context_link != -1 && ImGui::Selectable("Remove link")) {
+			m_links.erase(m_context_link);
+			m_context_link = -1;
+			saveUndo(0xffFF);
+		}
+
+		ImGui::EndPopup();
+	}		
+
 	ImGui::EndChild();
 }
 
@@ -1694,7 +1701,7 @@ void ShaderEditor::onGUILeftColumn()
 			ImGui::Text("Empty");
 		}
 		else {
-			ImGui::InputTextMultiline("", m_source.getData(), m_source.length(), ImVec2(0, 300), ImGuiInputTextFlags_ReadOnly);
+			ImGui::InputTextMultiline("##src", m_source.getData(), m_source.length(), ImVec2(0, 300), ImGuiInputTextFlags_ReadOnly);
 		}
 	}
 
