@@ -4,6 +4,7 @@
 #include "engine/array.h"
 #include "engine/path.h"
 #include "engine/string.h"
+#include "editor/utils.h"
 #include "imgui/imgui.h"
 
 
@@ -13,8 +14,10 @@ namespace Lumix
 
 struct InputMemoryStream;
 struct OutputMemoryStream;
+enum class NodeType;
 
 
+// TODO merge with ShaderEditorPlugin - this should make undo shortcut work
 struct ShaderEditor {
 	struct Link {
 		u32 from;
@@ -38,7 +41,7 @@ struct ShaderEditor {
 	};
 
 	struct Node {
-		Node(int type, ShaderEditor& editor);
+		Node(NodeType type, ShaderEditor& editor);
 		virtual ~Node() {}
 
 		virtual void save(OutputMemoryStream&blob) {}
@@ -52,11 +55,11 @@ struct ShaderEditor {
 		u16 m_id;
 		ImVec2 m_pos;
 
-		int m_type;
+		NodeType m_type;
 		ShaderEditor& m_editor;
 	};
 
-	explicit ShaderEditor(IAllocator& allocator);
+	explicit ShaderEditor(struct StudioApp& app, IAllocator& allocator);
 	~ShaderEditor();
 
 	void onGUI();
@@ -76,8 +79,8 @@ struct ShaderEditor {
 	Array<Node*> m_nodes;
 
 private:
-	void addNode(Node* node, const ImVec2& pos);
-	void destroyNode(Node* node);
+	void addNode(NodeType node_type, ImVec2 pos);
+	void destroyNode(Node * node);
 	void generate(const char* path, bool save_file);
 	void newGraph();
 	void save(OutputMemoryStream& blob);
@@ -95,6 +98,7 @@ private:
 
 	struct Undo;
 
+	StudioApp& m_app;
 	IAllocator& m_allocator;
 	StaticString<50> m_textures[MAX_TEXTURES_COUNT];
 	Path m_path;
@@ -105,6 +109,8 @@ private:
 	bool m_is_focused;
 	float m_left_col_width = 100;
 	String m_source;
+	Action m_undo_action;
+	Action m_redo_action;
 };
 
 

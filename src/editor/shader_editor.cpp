@@ -1,6 +1,6 @@
 #define LUMIX_NO_CUSTOM_CRT
 #include "shader_editor.h"
-#include "editor/utils.h"
+#include "editor/studio_app.h"
 #include "engine/crt.h"
 #include "engine/log.h"
 #include "engine/math.h"
@@ -461,7 +461,7 @@ void ShaderEditor::Node::printReference(OutputMemoryStream& blob, int output_idx
 }
 
 
-ShaderEditor::Node::Node(int type, ShaderEditor& editor)
+ShaderEditor::Node::Node(NodeType type, ShaderEditor& editor)
 	: m_type(type)
 	, m_editor(editor)
 	, m_id(0xffFF)
@@ -471,7 +471,7 @@ ShaderEditor::Node::Node(int type, ShaderEditor& editor)
 struct MultiplyNode : public ShaderEditor::Node {
 
 	explicit MultiplyNode(ShaderEditor& editor)
-		: Node((int)NodeType::MULTIPLY, editor)
+		: Node(NodeType::MULTIPLY, editor)
 	{}
 
 	void save(OutputMemoryStream& blob) override { blob.write(b_val); }
@@ -541,7 +541,7 @@ struct OperatorNode : public ShaderEditor::Node {
 	};
 
 	explicit OperatorNode(ShaderEditor& editor)
-		: Node((int)NodeType::OPERATOR, editor)
+		: Node(NodeType::OPERATOR, editor)
 	{
 		m_operation = MUL;
 	}
@@ -627,7 +627,7 @@ struct OperatorNode : public ShaderEditor::Node {
 struct SwizzleNode : public ShaderEditor::Node
 {
 	explicit SwizzleNode(ShaderEditor& editor)
-		: Node((int)NodeType::SWIZZLE, editor)
+		: Node(NodeType::SWIZZLE, editor)
 	{
 		m_swizzle = "xyzw";
 	}
@@ -669,7 +669,7 @@ struct SwizzleNode : public ShaderEditor::Node
 struct Vec4Node : public ShaderEditor::Node
 {
 	explicit Vec4Node(ShaderEditor& editor)
-		: Node((int)NodeType::VEC4, editor)
+		: Node(NodeType::VEC4, editor)
 	{}
 
 	void save(OutputMemoryStream& blob) override { blob.write(value); }
@@ -749,7 +749,7 @@ struct Vec4Node : public ShaderEditor::Node
 struct FunctionCallNode : public ShaderEditor::Node
 {
 	explicit FunctionCallNode(ShaderEditor& editor)
-		: Node((int)NodeType::FUNCTION_CALL, editor)
+		: Node(NodeType::FUNCTION_CALL, editor)
 	{
 		m_function = 0;
 	}
@@ -794,7 +794,7 @@ struct FunctionCallNode : public ShaderEditor::Node
 struct BinaryFunctionCallNode : public ShaderEditor::Node
 {
 	explicit BinaryFunctionCallNode(ShaderEditor& editor)
-		: Node((int)NodeType::BINARY_FUNCTION_CALL, editor)
+		: Node(NodeType::BINARY_FUNCTION_CALL, editor)
 	{
 		m_function = 0;
 	}
@@ -852,7 +852,7 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 
 struct NormalNode : public ShaderEditor::Node {
 	explicit NormalNode(ShaderEditor& editor)
-		: Node((int)NodeType::NORMAL, editor)
+		: Node(NodeType::NORMAL, editor)
 	{}
 
 	void save(OutputMemoryStream&) override {}
@@ -872,7 +872,7 @@ struct NormalNode : public ShaderEditor::Node {
 
 struct PositionNode : public ShaderEditor::Node {
 	explicit PositionNode(ShaderEditor& editor)
-		: Node((int)NodeType::POSITION, editor)
+		: Node(NodeType::POSITION, editor)
 	{}
 
 	void save(OutputMemoryStream&) override {}
@@ -894,7 +894,7 @@ template <ShaderEditor::ValueType TYPE>
 struct ConstNode : public ShaderEditor::Node
 {
 	explicit ConstNode(ShaderEditor& editor)
-		: Node((int)toNodeType(TYPE), editor)
+		: Node(toNodeType(TYPE), editor)
 	{
 		m_type = TYPE;
 		m_value[0] = m_value[1] = m_value[2] = m_value[3] = 0;
@@ -1003,7 +1003,7 @@ struct ConstNode : public ShaderEditor::Node
 struct SampleNode : public ShaderEditor::Node
 {
 	explicit SampleNode(ShaderEditor& editor)
-		: Node((int)NodeType::SAMPLE, editor)
+		: Node(NodeType::SAMPLE, editor)
 	{
 		m_texture = 0;
 	}
@@ -1047,7 +1047,7 @@ struct SampleNode : public ShaderEditor::Node
 struct PBRNode : public ShaderEditor::Node
 {
 	explicit PBRNode(ShaderEditor& editor)
-		: Node((int)NodeType::PBR, editor)
+		: Node(NodeType::PBR, editor)
 	{}
 
 	void save(OutputMemoryStream& blob) {}
@@ -1141,7 +1141,7 @@ struct PBRNode : public ShaderEditor::Node
 struct MixNode : public ShaderEditor::Node
 {
 	explicit MixNode(ShaderEditor& editor)
-		: Node((int)NodeType::MIX, editor)
+		: Node(NodeType::MIX, editor)
 	{}
 
 	ShaderEditor::ValueType getOutputType(int) const override 
@@ -1186,7 +1186,7 @@ struct MixNode : public ShaderEditor::Node
 struct PassNode : public ShaderEditor::Node
 {
 	explicit PassNode(ShaderEditor& editor)
-		: Node((int)NodeType::PASS, editor)
+		: Node(NodeType::PASS, editor)
 	{
 		m_pass[0] = 0;
 	}
@@ -1232,7 +1232,7 @@ struct PassNode : public ShaderEditor::Node
 struct IfNode : public ShaderEditor::Node
 {
 	explicit IfNode(ShaderEditor& editor)
-		: Node((int)NodeType::IF, editor)
+		: Node(NodeType::IF, editor)
 	{
 	}
 
@@ -1298,7 +1298,7 @@ struct IfNode : public ShaderEditor::Node
 struct VertexIDNode : ShaderEditor::Node
 {
 	explicit VertexIDNode(ShaderEditor& editor)
-		: Node((int)NodeType::VERTEX_ID, editor)
+		: Node(NodeType::VERTEX_ID, editor)
 	{}
 
 	void save(OutputMemoryStream& blob) override {}
@@ -1323,7 +1323,7 @@ struct VertexIDNode : ShaderEditor::Node
 struct BuiltinUniformNode : ShaderEditor::Node
 {
 	explicit BuiltinUniformNode(ShaderEditor& editor)
-		: Node((int)NodeType::BUILTIN_UNIFORM, editor)
+		: Node(NodeType::BUILTIN_UNIFORM, editor)
 	{
 		m_uniform = 0;
 	}
@@ -1358,8 +1358,9 @@ struct BuiltinUniformNode : ShaderEditor::Node
 	int m_uniform;
 };
 
-ShaderEditor::ShaderEditor(IAllocator& allocator)
+ShaderEditor::ShaderEditor(StudioApp& app, IAllocator& allocator)
 	: m_allocator(allocator)
+	, m_app(app)
 	, m_undo_stack(allocator)
 	, m_source(allocator)
 	, m_links(allocator)
@@ -1369,11 +1370,23 @@ ShaderEditor::ShaderEditor(IAllocator& allocator)
 	, m_is_open(false)
 {
 	newGraph();
+	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
+	m_undo_action.func.bind<&ShaderEditor::undo>(this);
+	m_undo_action.plugin = this;
+
+	m_redo_action.init(ICON_FA_REDO "Redo", "Shader editor redo", "shader_editor_redo", ICON_FA_REDO, os::Keycode::Z, Action::Modifiers::CTRL | Action::Modifiers::SHIFT, true);
+	m_redo_action.func.bind<&ShaderEditor::redo>(this);
+	m_redo_action.plugin = this;
+
+	m_app.addAction(&m_undo_action);
+	m_app.addAction(&m_redo_action);
 }
 
 
 ShaderEditor::~ShaderEditor()
 {
+	m_app.removeAction(&m_undo_action);
+	m_app.removeAction(&m_redo_action);
 	clear();
 }
 
@@ -1427,14 +1440,6 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 
 	m_source.resize((u32)blob.size());
 	memcpy(m_source.getData(), blob.data(), m_source.length() + 1);
-}
-
-
-void ShaderEditor::addNode(Node* node, const ImVec2& pos)
-{
-	m_nodes.push(node);
-	node->m_pos = pos;
-	node->m_id = ++m_last_node_id;
 }
 
 
@@ -1607,6 +1612,13 @@ static ImVec2 operator-(const ImVec2& a, const ImVec2& b)
 	return ImVec2(a.x - b.x, a.y - b.y);
 }
 
+void ShaderEditor::addNode(NodeType node_type, ImVec2 pos) {
+	Node* n = createNode((int)node_type);
+	n->m_id = ++m_last_node_id;
+	n->m_pos = pos;
+	m_nodes.push(n);
+	saveUndo(0xffFF);
+}
 
 void ShaderEditor::onGUIRightColumn()
 {
@@ -1614,6 +1626,7 @@ void ShaderEditor::onGUIRightColumn()
 	
 	static ImVec2 offset = ImVec2(0, 0);
 	ImGuiEx::BeginNodeEditor("shader_editor", &offset);
+	const ImVec2 origin = ImGui::GetCursorScreenPos();
 		
 	for (Node*& node : m_nodes) {
 		ImGuiEx::BeginNode(node->m_id, node->m_pos);
@@ -1645,9 +1658,22 @@ void ShaderEditor::onGUIRightColumn()
 
 	ImGuiEx::EndNodeEditor();
 
-	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && ImGui::GetIO().KeyCtrl) {
-		m_links.erase(hovered_link);
-		saveUndo(0xffFF);
+ 
+	const ImVec2 mp = ImGui::GetMousePos() - origin - offset;
+	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
+		if (ImGui::GetIO().KeyAlt && hovered_link != -1) {
+			m_links.erase(hovered_link);
+			saveUndo(0xffFF);
+		}
+		else if (os::isKeyDown((os::Keycode)'M')) {
+			addNode(NodeType::MULTIPLY, mp);
+		}
+		else if (os::isKeyDown((os::Keycode)'4')) {
+			addNode(NodeType::VEC4, mp);
+		}
+		else if (os::isKeyDown((os::Keycode)'1')) {
+			addNode(NodeType::FLOAT_CONSTANT, mp);
+		}
 	}
 
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
@@ -1731,13 +1757,23 @@ bool ShaderEditor::canRedo() const { return m_undo_stack_idx < m_undo_stack.size
 void ShaderEditor::undo() {
 	if (m_undo_stack_idx < 0) return;
 	
-	load(InputMemoryStream(m_undo_stack[m_undo_stack_idx].blob));
+	for (auto* node : m_nodes) {
+		LUMIX_DELETE(m_allocator, node);
+	}
+	m_nodes.clear();
+
+	load(InputMemoryStream(m_undo_stack[m_undo_stack_idx - 1].blob));
 	--m_undo_stack_idx;
 }
 
 void ShaderEditor::redo() {
 	if (m_undo_stack_idx + 1 >= m_undo_stack.size()) return;
 	
+	for (auto* node : m_nodes) {
+		LUMIX_DELETE(m_allocator, node);
+	}
+	m_nodes.clear();
+
 	load(InputMemoryStream(m_undo_stack[m_undo_stack_idx + 1].blob));
 	++m_undo_stack_idx;
 }
@@ -1788,8 +1824,8 @@ void ShaderEditor::onGUIMenu()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
-			if (ImGui::MenuItem("Undo", nullptr, false, canUndo())) undo();
-			if (ImGui::MenuItem("Redo", nullptr, false, canRedo())) redo();
+			menuItem(m_undo_action, canUndo());
+			menuItem(m_redo_action, canRedo());
 			ImGui::EndMenu();
 		}
 		if (ImGui::MenuItem("Generate & save", nullptr, false, !m_path.isEmpty())) {
@@ -1802,13 +1838,16 @@ void ShaderEditor::onGUIMenu()
 
 void ShaderEditor::onGUI()
 {
+	m_is_focused = false;
 	if (!m_is_open) return;
+
 	StaticString<LUMIX_MAX_PATH + 25> title("Shader Editor");
 	if (!m_path.isEmpty()) title << " - " << m_path.c_str();
 	title << "###Shader Editor";
+
 	if (ImGui::Begin(title, &m_is_open, ImGuiWindowFlags_MenuBar))
 	{
-		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
+		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		onGUIMenu();
 		onGUILeftColumn();
@@ -1818,10 +1857,6 @@ void ShaderEditor::onGUI()
 		m_left_col_width = size.x;
 		ImGui::SameLine();
 		onGUIRightColumn();
-	}
-	else
-	{
-		m_is_focused = false;
 	}
 	ImGui::End();
 }

@@ -12,7 +12,7 @@ namespace Lumix {
 struct ShaderEditorPlugin final : public StudioApp::GUIPlugin
 {
 	explicit ShaderEditorPlugin(StudioApp& app)
-		: m_shader_editor(app.getWorldEditor().getAllocator())
+		: m_shader_editor(app, app.getWorldEditor().getAllocator())
 		, m_app(app)
 	{
 		m_toggle_ui.init("Shader Editor", "Toggle shader editor", "shaderEditor", "", true);
