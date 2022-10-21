@@ -4,8 +4,10 @@
 #include "engine/array.h"
 #include "engine/path.h"
 #include "engine/string.h"
+#include "editor/imguicanvas.h"
 #include "editor/studio_app.h"
 #include "editor/utils.h"
+#include "renderer/gpu/gpu.h"
 #include "imgui/imgui.h"
 
 
@@ -110,6 +112,7 @@ private:
 
 	StudioApp& m_app;
 	IAllocator& m_allocator;
+	ImVec2 m_canvas_offset = ImVec2(0, 0);
 	StaticString<50> m_textures[MAX_TEXTURES_COUNT];
 	Path m_path;
 	int m_last_node_id;
@@ -123,6 +126,7 @@ private:
 	Action m_redo_action;
 	Action m_toggle_ui;
 	Action m_delete_action;
+	ImGuiCanvas m_canvas;
 };
 
 

@@ -3,13 +3,16 @@
 #include "editor/settings.h"
 #include "editor/studio_app.h"
 #include "engine/crt.h"
+#include "engine/engine.h"
 #include "engine/log.h"
 #include "engine/math.h"
 #include "engine/os.h"
 #include "engine/path.h"
+#include "engine/plugin.h"
 #include "engine/stream.h"
 #include "engine/string.h"
 #include "renderer/model.h"
+#include "renderer/renderer.h"
 #include "imgui/IconsFontAwesome5.h"
 #include <math.h>
 
@@ -30,217 +33,6 @@ enum class Version {
 };
 
 static constexpr u32 OUTPUT_FLAG = 1 << 31;
-static constexpr char* PROLOGUE_VS = R"#(
-include "pipelines/common.glsl"
-
-define "ALPHA_CUTOUT"
-define "VEGETATION"
-uniform("Stiffness", "float", 10)
-
-common [[
-	#ifdef SKINNED
-		layout(std140, binding = 4) uniform ModelState {
-			float layer;
-			float fur_scale;
-			float fur_gravity;
-			float padding;
-			mat4 matrix;
-			mat4 bones[256];
-		} Model;
-	#endif
-
-	#if defined _HAS_ATTR6 && !defined GRASS
-		#define HAS_LOD
-	#endif
-]]
-
-vertex_shader [[
-	layout(location = 0) in vec3 a_position;
-	#ifdef _HAS_ATTR1
-		layout(location = 1) in vec2 a_uv;
-	#else
-		const vec2 a_uv = vec2(0);
-	#endif
-	layout(location = 2) in vec3 a_normal;
-	#ifdef _HAS_ATTR3
-		layout(location = 3) in vec3 a_tangent;
-	#else 
-		const vec3 a_tangent = vec3(0, 1, 0);
-	#endif
-	#if defined SKINNED
-		layout(location = 4) in ivec4 a_indices;
-		layout(location = 5) in vec4 a_weights;
-	#elif defined INSTANCED || defined GRASS
-		layout(location = 4) in vec4 i_rot_quat;
-		layout(location = 5) in vec4 i_pos_scale;
-		#ifdef HAS_LOD
-			layout(location = 6) in float i_lod;
-			layout(location = 4) out float v_lod;
-		#endif
-		#ifdef _HAS_ATTR7
-			layout(location = 7) in vec4 a_color;
-			layout(location = 6) out vec4 v_color;
-		#endif
-		#ifdef _HAS_ATTR8
-			layout(location = 8) in float a_ao;
-			layout(location = 7) out float v_ao;
-		#endif
-	#else
-		layout(std140, binding = 4) uniform ModelState {
-			mat4 matrix;
-		} Model;
-	#endif
-	
-	layout(location = 0) out vec2 v_uv;
-	layout(location = 1) out vec3 v_normal;
-	layout(location = 2) out vec3 v_tangent;
-	layout(location = 3) out vec4 v_wpos;
-	#ifdef GRASS
-		layout(location = 5) out float v_darken;
-	#endif
-	
-	void main() {
-		#ifdef HAS_LOD
-			v_lod = 0;
-		#endif
-		v_uv = a_uv;
-		#if defined INSTANCED || defined GRASS
-			v_normal = rotateByQuat(i_rot_quat, a_normal);
-			v_tangent = rotateByQuat(i_rot_quat, a_tangent);
-			vec3 p = a_position * i_pos_scale.w;
-			#ifdef HAS_LOD
-				v_lod = i_lod;
-			#endif
-			#if defined GRASS && defined VEGETATION
-				p = vegetationAnim(i_pos_scale.xyz, p, 1 / (1.0 + u_stiffness));
-				v_darken = a_position.y > 0.1 ? 1 : 0.0;
-			#elif defined VEGETATION
-				#ifdef DEPTH
-					p = vegetationAnim(i_pos_scale.xyz - Pass.shadow_to_camera.xyz, p, 0.001);
-				#else
-					p = vegetationAnim(i_pos_scale.xyz, p, 0.001);
-				#endif
-			#endif
-			v_wpos = vec4(i_pos_scale.xyz + rotateByQuat(i_rot_quat, p), 1);
-			#ifdef _HAS_ATTR7
-				v_color = a_color;
-			#endif
-			#ifdef _HAS_ATTR8
-				v_ao = a_ao;
-			#endif
-		#elif defined SKINNED
-			mat4 model_mtx = Model.matrix * (a_weights.x * Model.bones[a_indices.x] + 
-			a_weights.y * Model.bones[a_indices.y] +
-			a_weights.z * Model.bones[a_indices.z] +
-			a_weights.w * Model.bones[a_indices.w]);
-			v_normal = mat3(model_mtx) * a_normal;
-			v_tangent = mat3(model_mtx) * a_tangent;
-			#ifdef FUR
-				v_wpos = model_mtx * vec4(a_position + (a_normal + vec3(0, -Model.fur_gravity * Model.layer, 0)) * Model.layer * Model.fur_scale,  1);
-			#else
-				v_wpos = model_mtx * vec4(a_position,  1);
-			#endif
-		#else 
-			mat4 model_mtx = Model.matrix;
-			v_normal = mat3(model_mtx) * a_normal;
-			v_tangent = mat3(model_mtx) * a_tangent;
-
-			vec3 p = a_position;
-			#ifdef VEGETATION
-				p = vegetationAnim(Model.matrix[3].xyz, p, 0.001);
-			#endif
-
-			v_wpos = model_mtx * vec4(p,  1);
-		#endif
-)#";
-
-static constexpr char* PROLOGUE_FS = R"#(
-		gl_Position = Pass.view_projection * v_wpos;		
-	}
-]]
-
-fragment_shader [[
-)#";
-
-static constexpr char* PROLOGUE_FS2 = R"#(
-	layout (binding=5) uniform sampler2D u_shadowmap;
-	#if !defined DEPTH && !defined DEFERRED && !defined GRASS
-		layout (binding=6) uniform sampler2D u_shadow_atlas;
-		layout (binding=7) uniform samplerCubeArray u_reflection_probes;
-	#endif
-	
-	layout(location = 0) in vec2 v_uv;
-	layout(location = 1) in vec3 v_normal;
-	layout(location = 2) in vec3 v_tangent;
-	layout(location = 3) in vec4 v_wpos;
-	#ifdef HAS_LOD
-		layout(location = 4) in float v_lod;
-	#endif
-	#ifdef GRASS
-		layout(location = 5) in float v_darken;
-	#endif
-	#ifdef _HAS_ATTR7
-		layout(location = 6) in vec4 v_color;
-	#endif
-	#ifdef _HAS_ATTR8
-		layout(location = 7) in float v_ao;
-	#endif
-
-	#if defined DEFERRED || defined GRASS
-		layout(location = 0) out vec4 o_gbuffer0;
-		layout(location = 1) out vec4 o_gbuffer1;
-		layout(location = 2) out vec4 o_gbuffer2;
-	#elif !defined DEPTH
-		layout(location = 0) out vec4 o_color;
-	#endif
-
-	Surface getSurface()
-	{
-
-		Surface data;
-)#";
-
-static constexpr char* EPILOGUE = R"#(
-		data.V = normalize(-data.wpos);
-		return data;
-	}
-	
-	#ifdef DEPTH
-		void main()
-		{
-			#ifdef ALPHA_CUTOUT
-				vec4 c = texture(u_albedomap, v_uv);
-				if(c.a < 0.5) discard;
-			#endif
-		}
-	#elif defined DEFERRED || defined GRASS
-		void main()
-		{
-			Surface data = getSurface();
-			#if defined ALPHA_CUTOUT && defined LUMIX_DX_SHADER
-				if(data.alpha < 0.5) discard;
-			#endif
-			packSurface(data, o_gbuffer0, o_gbuffer1, o_gbuffer2);
-		}
-	#else 
-		void main()
-		{
-			Surface data = getSurface();
-			
-			float linear_depth = dot(data.wpos.xyz, Pass.view_dir.xyz);
-			Cluster cluster = getClusterLinearDepth(linear_depth);
-			o_color.rgb = computeLighting(cluster, data, Global.light_dir.xyz, Global.light_color.rgb * Global.light_intensity, u_shadowmap, u_shadow_atlas, u_reflection_probes);
-
-			#if defined ALPHA_CUTOUT
-				if(data.alpha < 0.5) discard;
-			#endif
-
-			float ndotv = abs(dot(data.N , data.V)) + 1e-5f;
-			o_color.a = mix(data.alpha, 1, pow(saturate(1 - ndotv), 5));
-		}
-	#endif
-]]
-)#";
 
 enum class NodeType {
 	PBR,
@@ -531,6 +323,13 @@ struct OperatorNode : public ShaderEditor::Node {
 		return getInputType(0);
 	}
 
+	void generate(OutputMemoryStream& blob) const override {
+		const Input input0 = getInput(m_editor, m_id, 0);
+		const Input input1 = getInput(m_editor, m_id, 1);
+		input0.node->generate(blob);
+		if (input1) input1.node->generate(blob);
+	}
+
 	void printReference(OutputMemoryStream& blob, int attr_idx) const override
 	{
 		const Input input0 = getInput(m_editor, m_id, 0);
@@ -628,6 +427,12 @@ struct FunctionCallNode : public ShaderEditor::Node
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
 
+	ShaderEditor::ValueType getOutputType(int) const override { 
+		const Input input0 = getInput(m_editor, m_id, 0);
+		if (input0) return input0.node->getOutputType(input0.output_idx);
+		return ShaderEditor::ValueType::FLOAT;
+	}
+
 	static const char* getName() {
 		switch (Type) {
 			case NodeType::ABS: return "abs";
@@ -656,6 +461,8 @@ struct FunctionCallNode : public ShaderEditor::Node
 
 	void generate(OutputMemoryStream& blob) const override {
 		const Input input0 = getInput(m_editor, m_id, 0);
+
+		if (input0) input0.node->generate(blob);
 
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = " << getName() << "(";
 		if (input0) {
@@ -741,17 +548,27 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 
 
 template <NodeType Type>
-struct UVNode : public ShaderEditor::Node {
-	explicit UVNode(ShaderEditor& editor)
+struct VaryingNode : public ShaderEditor::Node {
+	explicit VaryingNode(ShaderEditor& editor)
 		: Node(Type, editor)
 	{}
 
 	void save(OutputMemoryStream&) override {}
 	void load(InputMemoryStream&) override {}
-	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC3; }
+
+	ShaderEditor::ValueType getOutputType(int) const override { 
+		switch(Type) {
+			case NodeType::POSITION: return ShaderEditor::ValueType::VEC3;
+			case NodeType::NORMAL: return ShaderEditor::ValueType::VEC3;
+			case NodeType::UV0: return ShaderEditor::ValueType::VEC2;
+			default: ASSERT(false); return ShaderEditor::ValueType::VEC3;
+		}
+	}
 
 	void printReference(OutputMemoryStream& blob, int output_idx) const {
 		switch(Type) {
+			case NodeType::POSITION: blob << "v_wpos"; break;
+			case NodeType::NORMAL: blob << "v_normal"; break;
 			case NodeType::UV0: blob << "v_uv"; break;
 			default: ASSERT(false); break;
 		}
@@ -761,49 +578,11 @@ struct UVNode : public ShaderEditor::Node {
 	bool onGUI() override {
 		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		switch(Type) {
+			case NodeType::POSITION: ImGui::Text("Position"); break;
+			case NodeType::NORMAL: ImGui::Text("Normal"); break;
 			case NodeType::UV0: ImGui::Text("UV0"); break;
 			default: ASSERT(false); break;
 		}
-		return false;
-	}
-};
-
-struct NormalNode : public ShaderEditor::Node {
-	explicit NormalNode(ShaderEditor& editor)
-		: Node(NodeType::NORMAL, editor)
-	{}
-
-	void save(OutputMemoryStream&) override {}
-	void load(InputMemoryStream&) override {}
-	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC3; }
-
-	void printReference(OutputMemoryStream& blob, int output_idx) const {
-		blob << "v_normal";
-	}
-
-	bool onGUI() override {
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
-		ImGui::Text("Normal");
-		return false;
-	}
-};
-
-struct PositionNode : public ShaderEditor::Node {
-	explicit PositionNode(ShaderEditor& editor)
-		: Node(NodeType::POSITION, editor)
-	{}
-
-	void save(OutputMemoryStream&) override {}
-	void load(InputMemoryStream&) override {}
-	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC4; }
-
-	void printReference(OutputMemoryStream& blob, int output_idx) const {
-		blob << "v_wpos";
-	}
-
-	bool onGUI() override {
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
-		ImGui::Text("Position");
 		return false;
 	}
 };
@@ -1008,7 +787,6 @@ struct PBRNode : public ShaderEditor::Node
 			const char* default_value;
 		}
 		fields[] = { 
-			{ "wpos", "vec4(0, 0, 0, 1)" },
 			{ "albedo", "vec3(1, 0, 1)" },
 			{ "alpha", "1" }, 
 			{ "N", "v_normal" },
@@ -1016,7 +794,7 @@ struct PBRNode : public ShaderEditor::Node
 			{ "metallic", "0" },
 			{ "emission", "0" },
 			{ "ao", "1" },
-			{ "translucency", "1" },
+			{ "translucency", "0" },
 			{ "shadow", "1" }
 		};
 
@@ -1025,14 +803,13 @@ struct PBRNode : public ShaderEditor::Node
 			Input input = getInput(m_editor, m_id, i);
 			if (input) {
 				input.node->generate(blob);
-				blob << "\t\tdata." << field.name << " = ";
+				blob << "\tdata." << field.name << " = ";
 				input.printReference(blob);
 				const ShaderEditor::ValueType type = input.node->getOutputType(input.output_idx);
-				if (type == ShaderEditor::ValueType::VEC4 && i <= 1) blob << ".xyz";
 				blob << ";\n";
 			}
-			else if (i > 0) {
-				blob << "\t\tdata." << field.name << " = " << field.default_value << ";\n";
+			else {
+				blob << "\tdata." << field.name << " = " << field.default_value << ";\n";
 			}
 		}
 	}
@@ -1041,33 +818,30 @@ struct PBRNode : public ShaderEditor::Node
 		ImGui::Text("PBR");
 		
 		ImGuiEx::Pin(m_id, true);
-		ImGui::TextUnformatted("Vertex position");
-
-		ImGuiEx::Pin(m_id | (1 << 16), true);
 		ImGui::TextUnformatted("Albedo");
 
-		ImGuiEx::Pin(m_id | (2 << 16), true);
+		ImGuiEx::Pin(m_id | (1 << 16), true);
 		ImGui::TextUnformatted("Alpha");
 
-		ImGuiEx::Pin(m_id | (3 << 16), true);
+		ImGuiEx::Pin(m_id | (2 << 16), true);
 		ImGui::TextUnformatted("Normal");
 
-		ImGuiEx::Pin(m_id | (4 << 16), true);
+		ImGuiEx::Pin(m_id | (3 << 16), true);
 		ImGui::TextUnformatted("Roughness");
 
-		ImGuiEx::Pin(m_id | (5 << 16), true);
+		ImGuiEx::Pin(m_id | (4 << 16), true);
 		ImGui::TextUnformatted("Metallic");
 
-		ImGuiEx::Pin(m_id | (6 << 16), true);
+		ImGuiEx::Pin(m_id | (5 << 16), true);
 		ImGui::TextUnformatted("Emission");
 
-		ImGuiEx::Pin(m_id | (7 << 16), true);
+		ImGuiEx::Pin(m_id | (6 << 16), true);
 		ImGui::TextUnformatted("AO");
 
-		ImGuiEx::Pin(m_id | (8 << 16), true);
+		ImGuiEx::Pin(m_id | (7 << 16), true);
 		ImGui::TextUnformatted("Translucency");
 
-		ImGuiEx::Pin(m_id | (9 << 16), true);
+		ImGuiEx::Pin(m_id | (8 << 16), true);
 		ImGui::TextUnformatted("Shadow");
 
 		return false;
@@ -1288,6 +1062,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_undo_stack_idx(-1)
 	, m_is_focused(false)
 	, m_is_open(false)
+	, m_canvas(app)
 {
 	newGraph();
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
@@ -1348,6 +1123,7 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(32*1024);
 
+#if 0 // TODO
 	for (u32 i = 0; i < lengthOf(m_textures); ++i) {
 		if (m_textures[i].empty()) continue;
 
@@ -1356,10 +1132,15 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 			 << "\tdefault_texture = \"textures/common/white.tga\"\n"
 			 << "}\n";
 	}
+#endif
 
-	blob << PROLOGUE_VS;
+	blob << 
+R"#(import "pipelines/surface_base.inc"
+surface_shader [[
+	)#";
+
+#if 0 // TODO
 	((PBRNode*)m_nodes[0])->generateVS(blob);
-	blob << PROLOGUE_FS;
 
 	u32 binding = 0;
 	for (u32 i = 0; i < lengthOf(m_textures); ++i) {
@@ -1367,11 +1148,11 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 		blob << "\tlayout (binding=" << binding << ") uniform sampler2D " << m_textures[i] << ";\n";
 		++binding;
 	}
-	
-	blob << PROLOGUE_FS2;
+#endif	
 
 	m_nodes[0]->generate(blob);
-	blob << EPILOGUE;
+
+	blob << "]]";
 
 	if (save_file) {
 		PathInfo fi(sed_path);
@@ -1469,9 +1250,9 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
 		case NodeType::PASS:						return LUMIX_NEW(m_allocator, PassNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
-		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, PositionNode)(*this);
-		case NodeType::NORMAL:						return LUMIX_NEW(m_allocator, NormalNode)(*this);
-		case NodeType::UV0:							return LUMIX_NEW(m_allocator, UVNode<NodeType::UV0>)(*this);
+		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
+		case NodeType::NORMAL:						return LUMIX_NEW(m_allocator, VaryingNode<NodeType::NORMAL>)(*this);
+		case NodeType::UV0:							return LUMIX_NEW(m_allocator, VaryingNode<NodeType::UV0>)(*this);
 		
 		case NodeType::ABS:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ABS>)(*this);
 		case NodeType::ALL:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ALL>)(*this);
@@ -1624,6 +1405,8 @@ void ShaderEditor::onGUIRightColumn()
 {
 	ImGui::BeginChild("right_col");
 	
+	m_canvas.begin();
+
 	static ImVec2 offset = ImVec2(0, 0);
 	ImGuiEx::BeginNodeEditor("shader_editor", &offset);
 	const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -1657,7 +1440,6 @@ void ShaderEditor::onGUIRightColumn()
 	}
 
 	ImGuiEx::EndNodeEditor();
-
  
 	const ImVec2 mp = ImGui::GetMousePos() - origin - offset;
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
@@ -1729,6 +1511,8 @@ void ShaderEditor::onGUIRightColumn()
 
 		ImGui::EndPopup();
 	}		
+
+	m_canvas.end();
 
 	ImGui::EndChild();
 }
