@@ -67,7 +67,6 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 	~ShaderEditor();
 
 	void onWindowGUI();
-	const char* getTextureName(int index) const { return m_textures[index]; }
 	IAllocator& getAllocator() { return m_allocator; }
 	Node* createNode(int type);
 	Node& loadNode(InputMemoryStream& blob);
@@ -92,7 +91,7 @@ private:
 	void newGraph();
 	void save(OutputMemoryStream& blob);
 	void save(const char* path);
-	void load(InputMemoryStream& blob);
+	bool load(InputMemoryStream& blob);
 	void load();
 	bool canUndo() const;
 	bool canRedo() const;
@@ -113,7 +112,6 @@ private:
 	StudioApp& m_app;
 	IAllocator& m_allocator;
 	ImVec2 m_canvas_offset = ImVec2(0, 0);
-	StaticString<50> m_textures[MAX_TEXTURES_COUNT];
 	Path m_path;
 	int m_last_node_id;
 	int m_undo_stack_idx;

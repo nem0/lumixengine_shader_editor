@@ -13,6 +13,7 @@
 #include "engine/string.h"
 #include "renderer/model.h"
 #include "renderer/renderer.h"
+#include "renderer/shader.h"
 #include "imgui/IconsFontAwesome5.h"
 #include <math.h>
 
@@ -50,6 +51,11 @@ enum class NodeType {
 	NORMAL,
 	UV0,
 	IF,
+
+	// parameters
+	SCALAR_PARAM,
+	VEC4_PARAM,
+	COLOR_PARAM,
 
 	// operators
 	MULTIPLY,
@@ -169,6 +175,9 @@ static const struct NodeTypeDesc {
 	{nullptr, "Vertex ID", NodeType::VERTEX_ID},
 	{nullptr, "Pass", NodeType::PASS},
 	{nullptr, "If", NodeType::IF},
+	{nullptr, "Scalar parameter", NodeType::SCALAR_PARAM},
+	{nullptr, "Color parameter", NodeType::COLOR_PARAM},
+	{nullptr, "Vec4 parameter", NodeType::VEC4_PARAM},
 
 	{"Function", "Abs", NodeType::ABS},
 	{"Function", "All", NodeType::ALL},
@@ -326,7 +335,7 @@ struct OperatorNode : public ShaderEditor::Node {
 	void generate(OutputMemoryStream& blob) const override {
 		const Input input0 = getInput(m_editor, m_id, 0);
 		const Input input1 = getInput(m_editor, m_id, 1);
-		input0.node->generate(blob);
+		if (input0) input0.node->generate(blob);
 		if (input1) input1.node->generate(blob);
 	}
 
@@ -397,6 +406,12 @@ struct SwizzleNode : public ShaderEditor::Node
 		}
 	}
 	
+	void generate(OutputMemoryStream& blob) const override {
+		const Input input = getInput(m_editor, m_id, 0);
+		if (!input) return;
+		input.node->generate(blob);
+	}
+
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
 		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return;
@@ -494,9 +509,9 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
 
-	ShaderEditor::ValueType getOutputType(int) const override
-	{
-		// TODO
+	ShaderEditor::ValueType getOutputType(int) const override { 
+		const Input input0 = getInput(m_editor, m_id, 0);
+		if (input0) return input0.node->getOutputType(input0.output_idx);
 		return ShaderEditor::ValueType::FLOAT;
 	}
 
@@ -718,18 +733,19 @@ struct SampleNode : public ShaderEditor::Node
 {
 	explicit SampleNode(ShaderEditor& editor)
 		: Node(NodeType::SAMPLE, editor)
-	{
-		m_texture = 0;
-	}
+		, m_texture(editor.getAllocator())
+	{}
 
-	void save(OutputMemoryStream& blob) override { blob.write(m_texture); }
-	void load(InputMemoryStream& blob) override { blob.read(m_texture); }
+	void save(OutputMemoryStream& blob) override { blob.writeString(m_texture.c_str()); }
+	void load(InputMemoryStream& blob) override { m_texture = blob.readString(); }
 	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC4; }
 
 	void generate(OutputMemoryStream& blob) const override {
 		blob << "\t\tvec4 v" << m_id << " = ";
 		const Input input0 = getInput(m_editor, m_id, 0);
-		blob << "texture(" << m_editor.getTextureName(m_texture) << ", ";
+		char var_name[64];
+		Shader::toTextureVarName(Span(var_name), m_texture.c_str());
+		blob << "texture(" << var_name << ", ";
 		if (input0) input0.printReference(blob);
 		else blob << "v_uv";
 		blob << ");\n";
@@ -741,18 +757,57 @@ struct SampleNode : public ShaderEditor::Node
 
 		ImGui::SameLine();
 		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
-		auto getter = [](void* data, int idx, const char** out) -> bool {
-			*out = ((SampleNode*)data)->m_editor.getTextureName(idx);
-			return true;
-		};
-		bool res = ImGui::Combo("Texture", &m_texture, getter, this, ShaderEditor::MAX_TEXTURES_COUNT);
+		char tmp[128];
+		copyString(tmp, m_texture.c_str());
+		bool res = ImGui::InputText("Texture", tmp, sizeof(tmp));
+		if (res) m_texture = tmp;
 		return res;
 	}
 
-	int m_texture;
+	String m_texture;
 };
 
+template <NodeType Type>
+struct Parameter : public ShaderEditor::Node {
+	explicit Parameter(ShaderEditor& editor)
+		: Node(Type, editor)
+		, m_name(editor.getAllocator())
+	{}
 
+	void save(OutputMemoryStream& blob) { blob.writeString(m_name.c_str()); }
+	void load(InputMemoryStream& blob) { m_name = blob.readString(); }
+
+	bool onGUI() override {
+		switch(Type) {
+			case NodeType::SCALAR_PARAM: ImGui::TextUnformatted("Scalar param"); break;
+			case NodeType::VEC4_PARAM: ImGui::TextUnformatted("Vec4 param"); break;
+			case NodeType::COLOR_PARAM: ImGui::TextUnformatted("Color param"); break;
+			default: ASSERT(false); ImGui::TextUnformatted("Error"); break;
+		}
+		
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		char tmp[128];
+		copyString(tmp, m_name.c_str());
+		bool res = ImGui::InputText("Name", tmp, sizeof(tmp));
+		if (res) m_name = tmp;
+		return res;
+	}
+
+	void generate(OutputMemoryStream& blob) const override {
+		switch(Type) {
+			case NodeType::SCALAR_PARAM: blob << "\tfloat v"; break;
+			case NodeType::VEC4_PARAM: blob << "\tvec4 v"; break;
+			case NodeType::COLOR_PARAM: blob << "\tvec4 v"; break;
+			default: ASSERT(false); blob << "\tfloat v"; break;
+		}
+		char var_name[64];
+		Shader::toUniformVarName(Span(var_name), m_name.c_str());
+
+		blob << m_id << " = " << var_name << ";";
+	}
+
+	String m_name;
+};
 
 struct PBRNode : public ShaderEditor::Node
 {
@@ -788,8 +843,8 @@ struct PBRNode : public ShaderEditor::Node
 		}
 		fields[] = { 
 			{ "albedo", "vec3(1, 0, 1)" },
-			{ "alpha", "1" }, 
 			{ "N", "v_normal" },
+			{ "alpha", "1" }, 
 			{ "roughness", "1" },
 			{ "metallic", "0" },
 			{ "emission", "0" },
@@ -806,6 +861,8 @@ struct PBRNode : public ShaderEditor::Node
 				blob << "\tdata." << field.name << " = ";
 				input.printReference(blob);
 				const ShaderEditor::ValueType type = input.node->getOutputType(input.output_idx);
+				if (type != ShaderEditor::ValueType::VEC3 && i < 2) blob << ".rgb";
+				if (type != ShaderEditor::ValueType::FLOAT && i >= 2) blob << ".x";
 				blob << ";\n";
 			}
 			else {
@@ -1123,36 +1180,48 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(32*1024);
 
-#if 0 // TODO
-	for (u32 i = 0; i < lengthOf(m_textures); ++i) {
-		if (m_textures[i].empty()) continue;
+	blob << "import \"pipelines/surface_base.inc\"\n\n";
 
-		blob << "texture_slot {\n"
-			 << "\tname = \"" << m_textures[i] << "\",\n"
-			 << "\tdefault_texture = \"textures/common/white.tga\"\n"
-			 << "}\n";
+	// TODO only write uniforms/textures connected to output
+	// TODO deduplicate
+	for (Node* n : m_nodes) {
+		switch(n->m_type) {
+			case NodeType::SCALAR_PARAM:
+				blob << "uniform(\"" << ((Parameter<NodeType::SCALAR_PARAM>*)n)->m_name.c_str() << "\", \"float\")\n";
+				break;
+			case NodeType::VEC4_PARAM:
+				blob << "uniform(\"" << ((Parameter<NodeType::SCALAR_PARAM>*)n)->m_name.c_str() << "\", \"vec4\")\n";
+				break;
+			case NodeType::COLOR_PARAM:
+				blob << "uniform(\"" << ((Parameter<NodeType::SCALAR_PARAM>*)n)->m_name.c_str() << "\", \"color\")\n";
+				break;
+		}
 	}
-#endif
 
-	blob << 
-R"#(import "pipelines/surface_base.inc"
-surface_shader [[
-	)#";
-
-#if 0 // TODO
-	((PBRNode*)m_nodes[0])->generateVS(blob);
-
-	u32 binding = 0;
-	for (u32 i = 0; i < lengthOf(m_textures); ++i) {
-		if (m_textures[i].empty()) continue;
-		blob << "\tlayout (binding=" << binding << ") uniform sampler2D " << m_textures[i] << ";\n";
-		++binding;
+	blob << "surface_shader_ex({\n";
+	blob << "texture_slots = {\n";
+	for (Node* n : m_nodes) {
+		switch(n->m_type) {
+			case NodeType::SAMPLE:
+				SampleNode* sn = (SampleNode*)n;
+				blob << "{\n"
+					 << "\tname = \"" << sn->m_texture.c_str() << "\",\n"
+					 << "\tdefault_texture = \"textures/common/white.tga\"\n"
+					 << "}\n";
+				break;
+		}
 	}
-#endif	
+	blob << "},\n";
+
+	blob << "fragment = [[\n";
+
+	#if 0 // TODO
+		((PBRNode*)m_nodes[0])->generateVS(blob);
+	#endif	
 
 	m_nodes[0]->generate(blob);
 
-	blob << "]]";
+	blob << "]]\n})\n";
 
 	if (save_file) {
 		PathInfo fi(sed_path);
@@ -1205,11 +1274,9 @@ void ShaderEditor::save(const char* path) {
 
 void ShaderEditor::save(OutputMemoryStream& blob) {
 	blob.reserve(4096);
+	blob.write(u32('_LSE'));
 	blob.write(Version::LAST);
 	blob.write(m_last_node_id);
-	for (const StaticString<50>& t : m_textures) {
-		blob.writeString(t);
-	}
 
 	const i32 nodes_count = m_nodes.size();
 	blob.write(nodes_count);
@@ -1253,6 +1320,9 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
 		case NodeType::NORMAL:						return LUMIX_NEW(m_allocator, VaryingNode<NodeType::NORMAL>)(*this);
 		case NodeType::UV0:							return LUMIX_NEW(m_allocator, VaryingNode<NodeType::UV0>)(*this);
+		case NodeType::SCALAR_PARAM:				return LUMIX_NEW(m_allocator, Parameter<NodeType::SCALAR_PARAM>)(*this);
+		case NodeType::COLOR_PARAM:					return LUMIX_NEW(m_allocator, Parameter<NodeType::COLOR_PARAM>)(*this);
+		case NodeType::VEC4_PARAM:					return LUMIX_NEW(m_allocator, Parameter<NodeType::VEC4_PARAM>)(*this);
 		
 		case NodeType::ABS:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ABS>)(*this);
 		case NodeType::ALL:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ALL>)(*this);
@@ -1332,13 +1402,14 @@ void ShaderEditor::load() {
 	saveUndo(0xffFF);
 }
 
-void ShaderEditor::load(InputMemoryStream& blob) {
+bool ShaderEditor::load(InputMemoryStream& blob) {
 	Version version;
+	u32 magic;
+	blob.read(magic);
+	if (magic != '_LSE') return false;
 	blob.read(version);
+	if (version > Version::LAST) return false;
 	blob.read(m_last_node_id);
-	for (StaticString<50>& t : m_textures) {
-		t = blob.readString();
-	}
 
 	int size;
 	blob.read(size);
@@ -1349,6 +1420,7 @@ void ShaderEditor::load(InputMemoryStream& blob) {
 	blob.read(size);
 	m_links.resize(size);
 	blob.read(m_links.begin(), m_links.byte_size());
+	return true;
 }
 
 
@@ -1459,6 +1531,7 @@ void ShaderEditor::onGUIRightColumn()
 				{ 'I', NodeType::IF },
 				{ 'N', NodeType::NORMALIZE },
 				{ 'M', NodeType::MULTIPLY },
+				{ 'P', NodeType::SCALAR_PARAM },
 				{ 'S', NodeType::SATURATE },
 				{ 'T', NodeType::SAMPLE },
 				{ 'U', NodeType::UV0 },
@@ -1522,12 +1595,6 @@ void ShaderEditor::onGUILeftColumn()
 {
 	ImGui::BeginChild("left_col", ImVec2(m_left_col_width, 0));
 	ImGui::PushItemWidth(m_left_col_width);
-
-	if (ImGui::CollapsingHeader("Textures")) {
-		for (u32 i = 0; i < lengthOf(m_textures); ++i) {
-			ImGui::InputText(StaticString<10>("###tex", i), m_textures[i].data, sizeof(m_textures[i]));
-		}
-	}
 
 	if (ImGui::CollapsingHeader("Source")) {
 		if (m_source.length() == 0) {
@@ -1599,7 +1666,6 @@ void ShaderEditor::destroyNode(Node* node) {
 void ShaderEditor::newGraph() {
 	clear();
 
-	for (auto& t : m_textures) t = "";
 	m_last_node_id = 0;
 	m_path = "";
 	
@@ -1607,11 +1673,6 @@ void ShaderEditor::newGraph() {
 	m_nodes.back()->m_pos.x = 50;
 	m_nodes.back()->m_pos.y = 50;
 	m_nodes.back()->m_id = ++m_last_node_id;
-
-	m_textures[0] = "Albedo";
-	m_textures[1] = "Normal";
-	m_textures[2] = "Roughness";
-	m_textures[3] = "Metallic";
 
 	m_undo_stack.clear();
 	m_undo_stack_idx = -1;
