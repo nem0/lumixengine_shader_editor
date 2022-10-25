@@ -1467,7 +1467,8 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	}
 
 	m_source.resize((u32)blob.size());
-	memcpy(m_source.getData(), blob.data(), m_source.length() + 1);
+	memcpy(m_source.getData(), blob.data(), m_source.length());
+	m_source.getData()[m_source.length()] = '\0';
 }
 
 
