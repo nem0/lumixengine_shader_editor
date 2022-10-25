@@ -4,7 +4,6 @@
 #include "engine/array.h"
 #include "engine/path.h"
 #include "engine/string.h"
-#include "editor/imguicanvas.h"
 #include "editor/studio_app.h"
 #include "editor/utils.h"
 #include "renderer/gpu/gpu.h"
@@ -58,6 +57,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		u16 m_id;
 		ImVec2 m_pos;
 		bool m_selected = false;
+		bool m_reachable = false;
 
 		NodeType m_type;
 		ShaderEditor& m_editor;
@@ -103,6 +103,8 @@ private:
 	void onGUIMenu();
 	void onToggle();
 	void deleteSelectedNode();
+	void markReachableNodes() const;
+	void markReachable(Node* node) const;
 
 	void onSettingsLoaded() override;
 	void onBeforeSettingsSaved() override;
@@ -116,7 +118,6 @@ private:
 	int m_last_node_id;
 	int m_undo_stack_idx;
 	Array<Undo> m_undo_stack;
-	int m_context_link = -1;
 	bool m_is_focused;
 	float m_left_col_width = 150;
 	String m_source;
@@ -124,7 +125,7 @@ private:
 	Action m_redo_action;
 	Action m_toggle_ui;
 	Action m_delete_action;
-	ImGuiCanvas m_canvas;
+	ImGuiEx::Canvas m_canvas;
 };
 
 

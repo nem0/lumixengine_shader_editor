@@ -51,6 +51,8 @@ enum class NodeType {
 	NORMAL,
 	UV0,
 	IF,
+	APPEND,
+	STATIC_SWITCH,
 
 	// parameters
 	SCALAR_PARAM,
@@ -60,6 +62,8 @@ enum class NodeType {
 	// operators
 	MULTIPLY,
 	ADD,
+	SUBTRACT,
+	DIVIDE,
 
 	// binary functions
 	MIX,
@@ -67,6 +71,7 @@ enum class NodeType {
 	CROSS,
 	MIN,
 	MAX,
+	POW,
 	DISTANCE,
 	
 	// unary functions
@@ -175,6 +180,8 @@ static const struct NodeTypeDesc {
 	{nullptr, "Vertex ID", NodeType::VERTEX_ID},
 	{nullptr, "Pass", NodeType::PASS},
 	{nullptr, "If", NodeType::IF},
+	{nullptr, "Static switch", NodeType::STATIC_SWITCH},
+	{nullptr, "Append", NodeType::APPEND},
 	{nullptr, "Scalar parameter", NodeType::SCALAR_PARAM},
 	{nullptr, "Color parameter", NodeType::COLOR_PARAM},
 	{nullptr, "Vec4 parameter", NodeType::VEC4_PARAM},
@@ -190,7 +197,6 @@ static const struct NodeTypeDesc {
 	{"Function", "Fract", NodeType::FRACT},
 	{"Function", "Log", NodeType::LOG},
 	{"Function", "Log2", NodeType::LOG2},
-	{"Function", "Mix", NodeType::MIX},
 	{"Function", "Normalize", NodeType::NORMALIZE},
 	{"Function", "Not", NodeType::NOT},
 	{"Function", "Round", NodeType::ROUND},
@@ -201,14 +207,18 @@ static const struct NodeTypeDesc {
 	{"Function", "Transpose", NodeType::TRANSPOSE},
 	{"Function", "Trunc", NodeType::TRUNC},
 
+	{"Function", "Mix", NodeType::MIX},
 	{"Function", "Dot", NodeType::DOT},
 	{"Function", "Cross", NodeType::CROSS},
 	{"Function", "Min", NodeType::MIN},
 	{"Function", "Max", NodeType::MAX},
+	{"Function", "Power", NodeType::POW},
 	{"Function", "Distance", NodeType::DISTANCE},
 
 	{"Math", "Multiply", NodeType::MULTIPLY},
 	{"Math", "Add", NodeType::ADD},
+	{"Math", "Subtract", NodeType::SUBTRACT},
+	{"Math", "Divide", NodeType::DIVIDE},
 
 	{"Vertex", "Position", NodeType::POSITION},
 	{"Vertex", "Normal", NodeType::NORMAL},
@@ -273,7 +283,7 @@ static void	forEachInput(const ShaderEditor& editor, int node_id, const F& f) {
 	for (const ShaderEditor::Link& link : editor.m_links) {
 		if (toNodeId(link.to) == node_id) {
 			const int iter = editor.m_nodes.find([&](const ShaderEditor::Node* node) { return node->m_id == toNodeId(link.from); }); 
-			const ShaderEditor::Node* from = editor.m_nodes[iter];
+			ShaderEditor::Node* from = editor.m_nodes[iter];
 			const u16 from_attr = toAttrIdx(link.from);
 			const u16 to_attr = toAttrIdx(link.to);
 			f(from, from_attr, to_attr);
@@ -353,6 +363,8 @@ struct OperatorNode : public ShaderEditor::Node {
 		switch(Type) {
 			case NodeType::MULTIPLY: blob << " * "; break;
 			case NodeType::ADD: blob << " + "; break;
+			case NodeType::DIVIDE: blob << " / "; break;
+			case NodeType::SUBTRACT: blob << " - "; break;
 			default: ASSERT(false); blob << " * "; break;
 		}
 		if (input1) {
@@ -365,7 +377,10 @@ struct OperatorNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
 		ImGui::TextUnformatted("Multiply");
+		ImGuiEx::EndNodeTitleBar();
+
 		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 
 		ImGuiEx::Pin(m_id, true); ImGui::Text("A");
@@ -517,6 +532,7 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 
 	static const char* getName() {
 		switch (Type) {
+			case NodeType::POW: return "pow";
 			case NodeType::MIX: return "mix";
 			case NodeType::DOT: return "dot";
 			case NodeType::CROSS: return "cross";
@@ -549,7 +565,9 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
 		ImGui::TextUnformatted(getName());
+		ImGuiEx::EndNodeTitleBar();
 		ImGui::BeginGroup();
 		ImGuiEx::Pin(m_id, true); ImGui::Text("A");
 		ImGuiEx::Pin(m_id | (1 << 16), true); ImGui::Text("B");
@@ -767,9 +785,157 @@ struct SampleNode : public ShaderEditor::Node
 	String m_texture;
 };
 
+struct AppendNode : public ShaderEditor::Node {
+	explicit AppendNode(ShaderEditor& editor)
+	: Node(NodeType::APPEND, editor)
+	{}
+	
+	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
+		ImGui::TextUnformatted("Append");
+		ImGuiEx::EndNodeTitleBar();
+
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true);
+		ImGui::TextUnformatted("A");
+		ImGuiEx::Pin(m_id | (1 << 16), true);
+		ImGui::TextUnformatted("B");
+		ImGui::EndGroup();
+
+		ImGui::SameLine();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		return false;
+	}
+
+	static u32 getChannelCount(ShaderEditor::ValueType type) {
+		switch (type) {
+			case ShaderEditor::ValueType::FLOAT:
+			case ShaderEditor::ValueType::BOOL:
+			case ShaderEditor::ValueType::INT:
+				return 1;
+			case ShaderEditor::ValueType::VEC2:
+				return 2;
+			case ShaderEditor::ValueType::VEC3:
+				return 3;
+			case ShaderEditor::ValueType::IVEC4:
+			case ShaderEditor::ValueType::VEC4:
+				return 4;
+			default:
+				// TODO handle mat3 & co.
+				ASSERT(false);
+				return 1;
+		}
+	}
+
+	ShaderEditor::ValueType getOutputType(int index) const override {
+		const Input input0 = getInput(m_editor, m_id, 0);
+		const Input input1 = getInput(m_editor, m_id, 1);
+		u32 count = 0;
+		if (input0) count += getChannelCount(input0.node->getOutputType(input0.output_idx));
+		if (input1) count += getChannelCount(input1.node->getOutputType(input1.output_idx));
+		// TODO other types likes ivec4
+		switch (count) {
+			case 1: return ShaderEditor::ValueType::FLOAT;
+			case 2: return ShaderEditor::ValueType::VEC2;
+			case 3: return ShaderEditor::ValueType::VEC3;
+			case 4: return ShaderEditor::ValueType::VEC4;
+			default: ASSERT(false); return ShaderEditor::ValueType::FLOAT;
+		}
+	}
+
+	void generate(OutputMemoryStream& blob) const override {
+		const Input input0 = getInput(m_editor, m_id, 0);
+		if (input0) input0.node->generate(blob);
+		const Input input1 = getInput(m_editor, m_id, 1);
+		if (input1) input1.node->generate(blob);
+	}
+
+	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
+		const Input input0 = getInput(m_editor, m_id, 0);
+		const Input input1 = getInput(m_editor, m_id, 1);
+		if (!input0 && !input1) blob << "0";
+		blob << toString(getOutputType(0)) << "(";
+		if (input0) {
+			input0.printReference(blob);
+			if (input1) blob << ", ";
+		}
+		if (input1) {
+			input1.printReference(blob);
+		}
+		blob << ")";
+	}
+};
+
+struct StaticSwitchNode : public ShaderEditor::Node {
+	explicit StaticSwitchNode(ShaderEditor& editor)
+		: Node(NodeType::STATIC_SWITCH, editor)
+		, m_define(editor.getAllocator())
+	{}
+
+	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
+		ImGui::TextUnformatted("Static switch");
+		ImGuiEx::EndNodeTitleBar();
+		
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true);
+		ImGui::TextUnformatted("True");
+		ImGuiEx::Pin(m_id | (1 << 16), true);
+		ImGui::TextUnformatted("False");
+		ImGui::EndGroup();
+
+		ImGui::SameLine();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		char tmp[128];
+		copyString(tmp, m_define.c_str());
+		bool res = ImGui::InputText("Parameter", tmp, sizeof(tmp));
+		if (res) m_define = tmp;
+		return res;
+	}
+
+	void save(OutputMemoryStream& blob) override { blob.write(m_is_on); }
+	
+	void load(InputMemoryStream& blob) override { blob.read(m_is_on); }
+	
+	const char* getOutputTypeName() const {
+		const Input input = getInput(m_editor, m_id, m_is_on ? 0 : 1);
+		if (!input) return "float";
+		return toString(input.node->getOutputType(input.output_idx));
+	}
+
+	void generate(OutputMemoryStream& blob) const override {
+		blob << "#ifdef " << m_define.c_str() << "\n";
+		const Input input0 = getInput(m_editor, m_id, 0);
+		if (input0) {
+			input0.node->generate(blob);
+			blob << getOutputTypeName() << " v" << m_id << " = ";
+			input0.printReference(blob);
+			blob << ";\n";
+		}
+		blob << "#else\n";
+		const Input input1 = getInput(m_editor, m_id, 1);
+		if (input1) {
+			input1.node->generate(blob);
+			blob << getOutputTypeName() << " v" << m_id << " = "; 
+			input1.printReference(blob);
+			blob << ";\n";
+		}
+		blob << "#endif\n";
+	}
+	
+	ShaderEditor::ValueType getOutputType(int) const override {
+		const Input input = getInput(m_editor, m_id, m_is_on ? 0 : 1);
+		if (input) return input.node->getOutputType(input.output_idx);
+		return ShaderEditor::ValueType::FLOAT;
+	}
+
+	bool m_is_on = true;
+	String m_define;
+};
+
 template <NodeType Type>
-struct Parameter : public ShaderEditor::Node {
-	explicit Parameter(ShaderEditor& editor)
+struct ParameterNode : public ShaderEditor::Node {
+	explicit ParameterNode(ShaderEditor& editor)
 		: Node(Type, editor)
 		, m_name(editor.getAllocator())
 	{}
@@ -778,17 +944,19 @@ struct Parameter : public ShaderEditor::Node {
 	void load(InputMemoryStream& blob) { m_name = blob.readString(); }
 
 	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
 		switch(Type) {
 			case NodeType::SCALAR_PARAM: ImGui::TextUnformatted("Scalar param"); break;
 			case NodeType::VEC4_PARAM: ImGui::TextUnformatted("Vec4 param"); break;
 			case NodeType::COLOR_PARAM: ImGui::TextUnformatted("Color param"); break;
 			default: ASSERT(false); ImGui::TextUnformatted("Error"); break;
 		}
+		ImGuiEx::EndNodeTitleBar();
 		
 		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		char tmp[128];
 		copyString(tmp, m_name.c_str());
-		bool res = ImGui::InputText("Name", tmp, sizeof(tmp));
+		bool res = ImGui::InputText("##name", tmp, sizeof(tmp));
 		if (res) m_name = tmp;
 		return res;
 	}
@@ -872,16 +1040,18 @@ struct PBRNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
 		ImGui::Text("PBR");
+		ImGuiEx::EndNodeTitleBar();
 		
 		ImGuiEx::Pin(m_id, true);
 		ImGui::TextUnformatted("Albedo");
 
 		ImGuiEx::Pin(m_id | (1 << 16), true);
-		ImGui::TextUnformatted("Alpha");
+		ImGui::TextUnformatted("Normal");
 
 		ImGuiEx::Pin(m_id | (2 << 16), true);
-		ImGui::TextUnformatted("Normal");
+		ImGui::TextUnformatted("Alpha");
 
 		ImGuiEx::Pin(m_id | (3 << 16), true);
 		ImGui::TextUnformatted("Roughness");
@@ -1119,7 +1289,6 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_undo_stack_idx(-1)
 	, m_is_focused(false)
 	, m_is_open(false)
-	, m_canvas(app)
 {
 	newGraph();
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
@@ -1174,26 +1343,75 @@ ShaderEditor::~ShaderEditor()
 	clear();
 }
 
+void ShaderEditor::markReachable(Node* node) const {
+	node->m_reachable = true;
+
+	forEachInput(*this, node->m_id, [&](ShaderEditor::Node* from, u16 from_attr, u16 to_attr){
+		markReachable(from);
+	});
+}
+
+void ShaderEditor::markReachableNodes() const {
+	for (Node* n : m_nodes) {
+		n->m_reachable = false;
+	}
+	markReachable(m_nodes[0]);
+}
 
 void ShaderEditor::generate(const char* sed_path, bool save_file)
 {
+	markReachableNodes();
+
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(32*1024);
 
 	blob << "import \"pipelines/surface_base.inc\"\n\n";
 
-	// TODO only write uniforms/textures connected to output
-	// TODO deduplicate
+	Array<String> uniforms(m_allocator);
+	Array<String> defines(m_allocator);
+	Array<String> textures(m_allocator);
+
+	auto add_uniform = [&](auto* n, const char* type) {
+		const i32 idx = uniforms.find([&](const String& u) { return u == n->m_name; });
+		if (idx < 0) {
+			uniforms.emplace(n->m_name.c_str(), m_allocator);
+			blob << "uniform(\"" << n->m_name.c_str() << "\", \"" << type << "\")\n";
+		}
+	};
+
+	auto add_define = [&](StaticSwitchNode* n){
+		const i32 idx = defines.find([&](const String& u) { return u == n->m_define; });
+		if (idx < 0) {
+			defines.emplace(n->m_define.c_str(), m_allocator);
+			blob << "define(\"" << n->m_define.c_str() << "\")\n";
+		}
+	};
+
+	auto add_texture = [&](SampleNode* n){
+		const i32 idx = textures.find([&](const String& u) { return u == n->m_texture; });
+		if (idx < 0) {
+			textures.emplace(n->m_texture.c_str(), m_allocator);
+			blob << "{\n"
+				<< "\tname = \"" << n->m_texture.c_str() << "\",\n"
+				<< "\tdefault_texture = \"textures/common/white.tga\"\n"
+				<< "}\n";
+		}
+	};
+
 	for (Node* n : m_nodes) {
+		if (!n->m_reachable) continue;
 		switch(n->m_type) {
 			case NodeType::SCALAR_PARAM:
-				blob << "uniform(\"" << ((Parameter<NodeType::SCALAR_PARAM>*)n)->m_name.c_str() << "\", \"float\")\n";
+				add_uniform((ParameterNode<NodeType::SCALAR_PARAM>*)n, "float");
 				break;
 			case NodeType::VEC4_PARAM:
-				blob << "uniform(\"" << ((Parameter<NodeType::SCALAR_PARAM>*)n)->m_name.c_str() << "\", \"vec4\")\n";
+				add_uniform((ParameterNode<NodeType::VEC4_PARAM>*)n, "vec4");
 				break;
 			case NodeType::COLOR_PARAM:
-				blob << "uniform(\"" << ((Parameter<NodeType::SCALAR_PARAM>*)n)->m_name.c_str() << "\", \"color\")\n";
+				add_uniform((ParameterNode<NodeType::COLOR_PARAM>*)n, "color");
+				break;
+			case NodeType::STATIC_SWITCH:
+				add_define((StaticSwitchNode*)n);
 				break;
 		}
 	}
@@ -1201,13 +1419,10 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	blob << "surface_shader_ex({\n";
 	blob << "texture_slots = {\n";
 	for (Node* n : m_nodes) {
+		if (!n->m_reachable) continue;
 		switch(n->m_type) {
 			case NodeType::SAMPLE:
-				SampleNode* sn = (SampleNode*)n;
-				blob << "{\n"
-					 << "\tname = \"" << sn->m_texture.c_str() << "\",\n"
-					 << "\tdefault_texture = \"textures/common/white.tga\"\n"
-					 << "}\n";
+				add_texture((SampleNode*)n);
 				break;
 		}
 	}
@@ -1312,17 +1527,21 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::SAMPLE:						return LUMIX_NEW(m_allocator, SampleNode)(*this);
 		case NodeType::MULTIPLY:					return LUMIX_NEW(m_allocator, OperatorNode<NodeType::MULTIPLY>)(*this);
 		case NodeType::ADD:							return LUMIX_NEW(m_allocator, OperatorNode<NodeType::ADD>)(*this);
+		case NodeType::DIVIDE:						return LUMIX_NEW(m_allocator, OperatorNode<NodeType::DIVIDE>)(*this);
+		case NodeType::SUBTRACT:					return LUMIX_NEW(m_allocator, OperatorNode<NodeType::SUBTRACT>)(*this);
 		case NodeType::SWIZZLE:						return LUMIX_NEW(m_allocator, SwizzleNode)(*this);
 		case NodeType::TIME:						return LUMIX_NEW(m_allocator, UniformNode<NodeType::TIME>)(*this);
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
 		case NodeType::PASS:						return LUMIX_NEW(m_allocator, PassNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
+		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
+		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
 		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
 		case NodeType::NORMAL:						return LUMIX_NEW(m_allocator, VaryingNode<NodeType::NORMAL>)(*this);
 		case NodeType::UV0:							return LUMIX_NEW(m_allocator, VaryingNode<NodeType::UV0>)(*this);
-		case NodeType::SCALAR_PARAM:				return LUMIX_NEW(m_allocator, Parameter<NodeType::SCALAR_PARAM>)(*this);
-		case NodeType::COLOR_PARAM:					return LUMIX_NEW(m_allocator, Parameter<NodeType::COLOR_PARAM>)(*this);
-		case NodeType::VEC4_PARAM:					return LUMIX_NEW(m_allocator, Parameter<NodeType::VEC4_PARAM>)(*this);
+		case NodeType::SCALAR_PARAM:				return LUMIX_NEW(m_allocator, ParameterNode<NodeType::SCALAR_PARAM>)(*this);
+		case NodeType::COLOR_PARAM:					return LUMIX_NEW(m_allocator, ParameterNode<NodeType::COLOR_PARAM>)(*this);
+		case NodeType::VEC4_PARAM:					return LUMIX_NEW(m_allocator, ParameterNode<NodeType::VEC4_PARAM>)(*this);
 		
 		case NodeType::ABS:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ABS>)(*this);
 		case NodeType::ALL:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ALL>)(*this);
@@ -1350,6 +1569,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::CROSS:						return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::CROSS>)(*this);
 		case NodeType::MIN:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MIN>)(*this);
 		case NodeType::MAX:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MAX>)(*this);
+		case NodeType::POW:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::POW>)(*this);
 		case NodeType::DISTANCE:					return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::DISTANCE>)(*this);
 	}
 
@@ -1484,16 +1704,31 @@ void ShaderEditor::onGUIRightColumn()
 	const ImVec2 origin = ImGui::GetCursorScreenPos();
 		
 	for (Node*& node : m_nodes) {
+		const bool reachable = node->m_reachable;
+		if (!reachable) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
 		ImGuiEx::BeginNode(node->m_id, node->m_pos, &node->m_selected);
 		if (node->onGUI()) {
 			saveUndo(node->m_id);
 		}
 		ImGuiEx::EndNode();
+		if (!reachable) ImGui::PopStyleVar();
 	}
 
 	i32 hovered_link = -1;
 	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
-		ImGuiEx::NodeLink(m_links[i].from | OUTPUT_FLAG, m_links[i].to);
+		const Link& link = m_links[i];
+		const ImU32 colors[] = {
+			IM_COL32(0x20, 0x20, 0xA0, 255),
+			IM_COL32(0x20, 0xA0, 0x20, 255),
+			IM_COL32(0x20, 0xA0, 0xA0, 255),
+			IM_COL32(0xA0, 0x20, 0x20, 255),
+			IM_COL32(0xA0, 0x20, 0xA0, 255),
+			IM_COL32(0xA0, 0xA0, 0x20, 255),
+			IM_COL32(0xA0, 0xA0, 0xA0, 255),
+		};
+		const u64 hash = RuntimeHash(&link, sizeof(link)).getHashValue();
+		const u64 color_idx = hash % (lengthOf(colors));
+		ImGuiEx::NodeLinkEx(link.from | OUTPUT_FLAG, link.to, colors[color_idx], ImGui::GetColorU32(ImGuiCol_TabActive));
 		if (ImGuiEx::IsLinkHovered()) {
 			hovered_link = i;
 		}
@@ -1552,34 +1787,25 @@ void ShaderEditor::onGUIRightColumn()
 	bool open_context = false;
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
 		ImGui::OpenPopup("context_menu");
-		m_context_link = hovered_link;
 		open_context = true;
 	}
 
 	if(ImGui::BeginPopup("context_menu")) {
-		if (m_context_link == -1) {
-			static char filter[64] = "";
-			ImGui::SetNextItemWidth(150);
-			if (open_context) ImGui::SetKeyboardFocusHere();
-			ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
-			if (filter[0]) {
-				for (const auto& node_type : NODE_TYPES) {
-					if (stristr(node_type.name, filter)) {
-						if (ImGui::MenuItem(node_type.name)) {
-							addNode(node_type.type, mp);
-						}
+		static char filter[64] = "";
+		ImGui::SetNextItemWidth(150);
+		if (open_context) ImGui::SetKeyboardFocusHere();
+		ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
+		if (filter[0]) {
+			for (const auto& node_type : NODE_TYPES) {
+				if (stristr(node_type.name, filter)) {
+					if (ImGui::MenuItem(node_type.name)) {
+						addNode(node_type.type, mp);
 					}
 				}
 			}
-			else {
-				nodeGroupUI(*this, Span(NODE_TYPES), mp);
-			}
 		}
-
-		if (m_context_link != -1 && ImGui::Selectable("Remove link")) {
-			m_links.erase(m_context_link);
-			m_context_link = -1;
-			saveUndo(0xffFF);
+		else {
+			nodeGroupUI(*this, Span(NODE_TYPES), mp);
 		}
 
 		ImGui::EndPopup();
