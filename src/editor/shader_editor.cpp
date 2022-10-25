@@ -1704,9 +1704,9 @@ static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, Im
 	nodeGroupUI(editor, Span(n, nodes.end()), pos);
 }
 
-void ShaderEditor::onGUIRightColumn()
+void ShaderEditor::onGUICanvas()
 {
-	ImGui::BeginChild("right_col");
+	ImGui::BeginChild("canvas");
 	
 	m_canvas.begin();
 
@@ -1828,24 +1828,6 @@ void ShaderEditor::onGUIRightColumn()
 }
 
 
-void ShaderEditor::onGUILeftColumn()
-{
-	ImGui::BeginChild("left_col", ImVec2(m_left_col_width, 0));
-	ImGui::PushItemWidth(m_left_col_width);
-
-	if (ImGui::CollapsingHeader("Source")) {
-		if (m_source.length() == 0) {
-			ImGui::Text("Empty");
-		}
-		else {
-			ImGui::InputTextMultiline("##src", m_source.getData(), m_source.length(), ImVec2(0, 300), ImGuiInputTextFlags_ReadOnly);
-		}
-	}
-
-	ImGui::PopItemWidth();
-	ImGui::EndChild();
-}
-
 void ShaderEditor::saveUndo(u16 id) {
 	while (m_undo_stack.size() > m_undo_stack_idx + 1) m_undo_stack.pop();
 	++m_undo_stack_idx;
@@ -1921,6 +1903,7 @@ void ShaderEditor::onGUIMenu()
 	if(ImGui::BeginMenuBar()) {
 		if(ImGui::BeginMenu("File")) {
 			if (ImGui::MenuItem("New")) newGraph();
+			ImGui::MenuItem("View source", nullptr, &m_source_open);
 			if (ImGui::MenuItem("Open")) load();
 			if (ImGui::MenuItem("Save")) {
 				if (m_path.isEmpty()) {
@@ -1946,6 +1929,20 @@ void ShaderEditor::onGUIMenu()
 
 		ImGui::EndMenuBar();
 	}
+
+	if (m_source_open) {
+		ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin("Shader source", &m_source_open)) {
+			if (m_source.length() == 0) {
+				ImGui::Text("Empty");
+			}
+			else {
+				ImGui::SetNextItemWidth(-1);
+				ImGui::InputTextMultiline("##src", m_source.getData(), m_source.length(), ImVec2(0, ImGui::GetContentRegionAvail().y), ImGuiInputTextFlags_ReadOnly);
+			}
+		}
+		ImGui::End();
+	}
 }
 
 void ShaderEditor::onWindowGUI()
@@ -1962,13 +1959,7 @@ void ShaderEditor::onWindowGUI()
 		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		onGUIMenu();
-		onGUILeftColumn();
-		ImVec2 size(m_left_col_width, 0);
-		ImGui::SameLine();
-		ImGuiEx::VSplitter("vsplit", &size);
-		m_left_col_width = size.x;
-		ImGui::SameLine();
-		onGUIRightColumn();
+		onGUICanvas();
 	}
 	ImGui::End();
 }

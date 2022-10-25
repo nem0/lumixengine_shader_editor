@@ -98,8 +98,7 @@ private:
 
 	bool getSavePath();
 	void clear();
-	void onGUILeftColumn();
-	void onGUIRightColumn();
+	void onGUICanvas();
 	void onGUIMenu();
 	void onToggle();
 	void deleteSelectedNode();
@@ -119,13 +118,13 @@ private:
 	int m_undo_stack_idx;
 	Array<Undo> m_undo_stack;
 	bool m_is_focused;
-	float m_left_col_width = 150;
 	String m_source;
 	Action m_undo_action;
 	Action m_redo_action;
 	Action m_toggle_ui;
 	Action m_delete_action;
 	ImGuiEx::Canvas m_canvas;
+	bool m_source_open = false;
 };
 
 
