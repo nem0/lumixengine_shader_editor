@@ -376,9 +376,20 @@ struct OperatorNode : public ShaderEditor::Node {
 		blob << ")";
 	}
 
+	static const char* getName() {
+		switch (Type) {
+			case NodeType::ADD: return "Add";
+			case NodeType::SUBTRACT: return "Subtract";
+			case NodeType::MULTIPLY: return "Multiply";
+			case NodeType::DIVIDE: return "Divide";
+		}
+		ASSERT(false);
+		return "Error";
+	}
+
 	bool onGUI() override {
 		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted("Multiply");
+		ImGui::TextUnformatted(getName());
 		ImGuiEx::EndNodeTitleBar();
 
 		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
@@ -1727,7 +1738,7 @@ void ShaderEditor::onGUIRightColumn()
 			IM_COL32(0xA0, 0xA0, 0xA0, 255),
 		};
 		const u64 hash = RuntimeHash(&link, sizeof(link)).getHashValue();
-		const u64 color_idx = hash % (lengthOf(colors));
+		const u64 color_idx = hash % lengthOf(colors);
 		ImGuiEx::NodeLinkEx(link.from | OUTPUT_FLAG, link.to, colors[color_idx], ImGui::GetColorU32(ImGuiCol_TabActive));
 		if (ImGuiEx::IsLinkHovered()) {
 			hovered_link = i;
