@@ -1317,6 +1317,8 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 }
 
 void ShaderEditor::deleteSelectedNodes() {
+	if (m_is_any_item_active) return;
+
 	for (i32 i = m_nodes.size() - 1; i >= 0; --i) {
 		Node* node = m_nodes[i];
 		if (node->m_selected) {
@@ -1643,6 +1645,7 @@ bool ShaderEditor::load(InputMemoryStream& blob) {
 	blob.read(size);
 	m_links.resize(size);
 	blob.read(m_links.begin(), m_links.byte_size());
+	markReachableNodes();
 	return true;
 }
 
@@ -1800,6 +1803,7 @@ void ShaderEditor::onGUICanvas()
 
 	if(ImGui::BeginPopup("context_menu")) {
 		static char filter[64] = "";
+		if (ImGui::MenuItem("Reset zoom")) m_canvas.m_scale = ImVec2(1, 1);
 		ImGui::SetNextItemWidth(150);
 		if (open_context) ImGui::SetKeyboardFocusHere();
 		ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
@@ -1818,6 +1822,8 @@ void ShaderEditor::onGUICanvas()
 
 		ImGui::EndPopup();
 	}		
+
+	m_is_any_item_active = ImGui::IsAnyItemActive();
 
 	m_canvas.end();
 

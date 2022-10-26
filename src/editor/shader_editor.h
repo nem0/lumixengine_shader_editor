@@ -126,6 +126,7 @@ private:
 	Action m_delete_action;
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
+	bool m_is_any_item_active = false;
 };
 
 
