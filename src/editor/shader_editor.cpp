@@ -46,13 +46,13 @@ enum class NodeType {
 	SWIZZLE,
 	TIME,
 	VERTEX_ID,
-	PASS,
 	POSITION,
 	NORMAL,
 	UV0,
 	IF,
 	APPEND,
 	STATIC_SWITCH,
+	MIX,
 
 	// parameters
 	SCALAR_PARAM,
@@ -66,7 +66,6 @@ enum class NodeType {
 	DIVIDE,
 
 	// binary functions
-	MIX,
 	DOT,
 	CROSS,
 	MIN,
@@ -178,7 +177,7 @@ static const struct NodeTypeDesc {
 	{nullptr, "Swizzle", NodeType::SWIZZLE},
 	{nullptr, "Time", NodeType::TIME},
 	{nullptr, "Vertex ID", NodeType::VERTEX_ID},
-	{nullptr, "Pass", NodeType::PASS},
+	{nullptr, "Mix", NodeType::MIX},
 	{nullptr, "If", NodeType::IF},
 	{nullptr, "Static switch", NodeType::STATIC_SWITCH},
 	{nullptr, "Append", NodeType::APPEND},
@@ -207,7 +206,6 @@ static const struct NodeTypeDesc {
 	{"Function", "Transpose", NodeType::TRANSPOSE},
 	{"Function", "Trunc", NodeType::TRUNC},
 
-	{"Function", "Mix", NodeType::MIX},
 	{"Function", "Dot", NodeType::DOT},
 	{"Function", "Cross", NodeType::CROSS},
 	{"Function", "Min", NodeType::MIN},
@@ -326,6 +324,47 @@ ShaderEditor::Node::Node(NodeType type, ShaderEditor& editor)
 	, m_id(0xffFF)
 {
 }
+
+struct MixNode : public ShaderEditor::Node {
+	explicit MixNode(ShaderEditor& editor)
+		: Node(NodeType::MIX, editor)
+	{}
+
+	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
+		ImGui::TextUnformatted("Mix");
+		ImGuiEx::EndNodeTitleBar();
+
+		ImGui::BeginGroup();
+		ImGuiEx::Pin(m_id, true); ImGui::TextUnformatted("A");
+		ImGuiEx::Pin(m_id | (1 << 16), true); ImGui::TextUnformatted("B");
+		ImGuiEx::Pin(m_id | (2 << 16), true); ImGui::TextUnformatted("Weight");
+		ImGui::EndGroup();
+
+		ImGui::SameLine();
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		return false;
+	}
+
+	void generate(OutputMemoryStream& blob) const override {
+		const Input input0 = getInput(m_editor, m_id, 0);
+		const Input input1 = getInput(m_editor, m_id, 1);
+		const Input input2 = getInput(m_editor, m_id, 2);
+		if (!input0 || !input1 || !input2) return;
+		input0.node->generate(blob);
+		input1.node->generate(blob);
+		input2.node->generate(blob);
+
+		
+		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = mix(";
+		input0.printReference(blob);
+		blob << ", ";
+		input1.printReference(blob);
+		blob << ", ";
+		input2.printReference(blob);
+		blob << ");\n";
+	}
+};
 
 template <NodeType Type>
 struct OperatorNode : public ShaderEditor::Node {
@@ -544,7 +583,6 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	static const char* getName() {
 		switch (Type) {
 			case NodeType::POW: return "pow";
-			case NodeType::MIX: return "mix";
 			case NodeType::DOT: return "dot";
 			case NodeType::CROSS: return "cross";
 			case NodeType::MIN: return "min";
@@ -899,7 +937,8 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
 		char tmp[128];
 		copyString(tmp, m_define.c_str());
-		bool res = ImGui::InputText("Parameter", tmp, sizeof(tmp));
+		ImGui::SetNextItemWidth(80);
+		bool res = ImGui::InputText("##param", tmp, sizeof(tmp));
 		if (res) m_define = tmp;
 		return res;
 	}
@@ -1062,7 +1101,7 @@ struct PBRNode : public ShaderEditor::Node
 		ImGui::TextUnformatted("Normal");
 
 		ImGuiEx::Pin(m_id | (2 << 16), true);
-		ImGui::TextUnformatted("Alpha");
+		ImGui::TextUnformatted("Opacity");
 
 		ImGuiEx::Pin(m_id | (3 << 16), true);
 		ImGui::TextUnformatted("Roughness");
@@ -1084,53 +1123,6 @@ struct PBRNode : public ShaderEditor::Node
 
 		return false;
 	}
-};
-
-
-struct PassNode : public ShaderEditor::Node
-{
-	explicit PassNode(ShaderEditor& editor)
-		: Node(NodeType::PASS, editor)
-	{
-		m_pass[0] = 0;
-	}
-
-	void save(OutputMemoryStream& blob) override { blob.writeString(m_pass); }
-	void load(InputMemoryStream& blob) override { copyString(m_pass, blob.readString()); }
-	ShaderEditor::ValueType getOutputType(int) const override { return getInputType(0); }
-
-	void generate(OutputMemoryStream& blob) const override {
-		const char* defs[] = { "\t\t#ifdef ", "\t\t#ifndef " };
-		for (int i = 0; i < 2; ++i) {
-			const Input input = getInput(m_editor, m_id, 0);
-			
-			if (!input) continue;
-
-			blob << defs[i] << m_pass << "\n";
-			blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = ";
-			input.printReference(blob);
-			blob << ";\n";
-			blob << "\t\t#endif // " << m_pass << "\n\n";
-		}
-	}
-
-	bool onGUI() override {
-		ImGui::BeginGroup();
-		ImGuiEx::Pin(m_id, true);
-		ImGui::Text("if defined");
-
-		ImGuiEx::Pin(m_id | (1 << 16), true);
-		ImGui::Text("if not defined");
-		ImGui::EndGroup();
-		ImGui::SameLine();
-
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
-		ImGui::InputText("Pass", m_pass, sizeof(m_pass));
-
-		return false;
-	}
-
-	char m_pass[50];
 };
 
 struct IfNode : public ShaderEditor::Node
@@ -1544,7 +1536,6 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::SWIZZLE:						return LUMIX_NEW(m_allocator, SwizzleNode)(*this);
 		case NodeType::TIME:						return LUMIX_NEW(m_allocator, UniformNode<NodeType::TIME>)(*this);
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
-		case NodeType::PASS:						return LUMIX_NEW(m_allocator, PassNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
 		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
@@ -1554,6 +1545,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::SCALAR_PARAM:				return LUMIX_NEW(m_allocator, ParameterNode<NodeType::SCALAR_PARAM>)(*this);
 		case NodeType::COLOR_PARAM:					return LUMIX_NEW(m_allocator, ParameterNode<NodeType::COLOR_PARAM>)(*this);
 		case NodeType::VEC4_PARAM:					return LUMIX_NEW(m_allocator, ParameterNode<NodeType::VEC4_PARAM>)(*this);
+		case NodeType::MIX:							return LUMIX_NEW(m_allocator, MixNode)(*this);
 		
 		case NodeType::ABS:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ABS>)(*this);
 		case NodeType::ALL:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ALL>)(*this);
@@ -1576,7 +1568,6 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::TRANSPOSE:					return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TRANSPOSE>)(*this);
 		case NodeType::TRUNC:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TRUNC>)(*this);
 
-		case NodeType::MIX:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MIX>)(*this);
 		case NodeType::DOT:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::DOT>)(*this);
 		case NodeType::CROSS:						return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::CROSS>)(*this);
 		case NodeType::MIN:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MIN>)(*this);
@@ -1927,6 +1918,7 @@ void ShaderEditor::onGUIMenu()
 		if (ImGui::BeginMenu("Edit")) {
 			menuItem(m_undo_action, canUndo());
 			menuItem(m_redo_action, canRedo());
+			if (ImGui::MenuItem(ICON_FA_BRUSH "Clean")) deleteUnreachable();
 			ImGui::EndMenu();
 		}
 		if (ImGui::MenuItem("Generate & save", nullptr, false, !m_path.isEmpty())) {
@@ -1949,6 +1941,24 @@ void ShaderEditor::onGUIMenu()
 		}
 		ImGui::End();
 	}
+}
+
+void ShaderEditor::deleteUnreachable() {
+	markReachableNodes();
+	for (i32 i = m_nodes.size() - 1; i >= 0; --i) {
+		Node* node = m_nodes[i];
+		if (!node->m_reachable) {
+			for (i32 j = m_links.size() - 1; j >= 0; --j) {
+				if (toNodeId(m_links[j].from) == node->m_id || toNodeId(m_links[j].to) == node->m_id) {
+					m_links.erase(j);
+				}
+			}
+
+			LUMIX_DELETE(m_allocator, node);
+			m_nodes.swapAndPop(i);
+		}
+	}
+	saveUndo(0xffFF);
 }
 
 void ShaderEditor::onWindowGUI()

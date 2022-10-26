@@ -104,6 +104,7 @@ private:
 	void deleteSelectedNodes();
 	void markReachableNodes() const;
 	void markReachable(Node* node) const;
+	void deleteUnreachable();
 
 	void onSettingsLoaded() override;
 	void onBeforeSettingsSaved() override;
