@@ -101,7 +101,7 @@ private:
 	void onGUICanvas();
 	void onGUIMenu();
 	void onToggle();
-	void deleteSelectedNode();
+	void deleteSelectedNodes();
 	void markReachableNodes() const;
 	void markReachable(Node* node) const;
 

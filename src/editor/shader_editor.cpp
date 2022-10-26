@@ -1311,7 +1311,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_redo_action.plugin = this;
 
 	m_delete_action.init(ICON_FA_TRASH "Delete", "Shader editor delete", "shader_editor_delete", ICON_FA_TRASH, os::Keycode::DEL, Action::Modifiers::NONE, true);
-	m_delete_action.func.bind<&ShaderEditor::deleteSelectedNode>(this);
+	m_delete_action.func.bind<&ShaderEditor::deleteSelectedNodes>(this);
 	m_delete_action.plugin = this;
 
 	m_toggle_ui.init("Shader Editor", "Toggle shader editor", "shaderEditor", "", true);
@@ -1324,7 +1324,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_app.addAction(&m_delete_action);
 }
 
-void ShaderEditor::deleteSelectedNode() {
+void ShaderEditor::deleteSelectedNodes() {
 	for (i32 i = m_nodes.size() - 1; i >= 0; --i) {
 		Node* node = m_nodes[i];
 		if (node->m_selected) {
@@ -1708,7 +1708,7 @@ static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, Im
 void ShaderEditor::onGUICanvas()
 {
 	ImGui::BeginChild("canvas");
-	
+
 	m_canvas.begin();
 
 	static ImVec2 offset = ImVec2(0, 0);
@@ -1718,11 +1718,16 @@ void ShaderEditor::onGUICanvas()
 	for (Node*& node : m_nodes) {
 		const bool reachable = node->m_reachable;
 		if (!reachable) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
+		
+		const ImVec2 old_pos = node->m_pos;
 		ImGuiEx::BeginNode(node->m_id, node->m_pos, &node->m_selected);
 		if (node->onGUI()) {
 			saveUndo(node->m_id);
 		}
 		ImGuiEx::EndNode();
+		if (old_pos.x != node->m_pos.x || old_pos.y != node->m_pos.y) {
+			saveUndo(node->m_id);
+		}
 		if (!reachable) ImGui::PopStyleVar();
 	}
 
@@ -1831,13 +1836,13 @@ void ShaderEditor::onGUICanvas()
 
 void ShaderEditor::saveUndo(u16 id) {
 	while (m_undo_stack.size() > m_undo_stack_idx + 1) m_undo_stack.pop();
-	++m_undo_stack_idx;
 
 	Undo u(m_allocator);
 	u.id = id;
 	save(u.blob);
 	if (id == 0xffFF || m_undo_stack.back().id != id) {
 		m_undo_stack.push(static_cast<Undo&&>(u));
+		++m_undo_stack_idx;
 	}
 	else {
 		m_undo_stack.back() = static_cast<Undo&&>(u);
