@@ -86,6 +86,8 @@ private:
 	const char* getName() const override { return "shader_editor"; }
 	bool isOpen() const { return m_is_open; }
 
+	void onSettingsLoaded() override;
+	void onBeforeSettingsSaved() override;
 	void destroyNode(Node * node);
 	void generate(const char* path, bool save_file);
 	void newGraph();
@@ -93,6 +95,7 @@ private:
 	void save(const char* path);
 	bool load(InputMemoryStream& blob);
 	void load();
+	void load(const char* path);
 	bool canUndo() const;
 	bool canRedo() const;
 
@@ -105,9 +108,7 @@ private:
 	void markReachableNodes() const;
 	void markReachable(Node* node) const;
 	void deleteUnreachable();
-
-	void onSettingsLoaded() override;
-	void onBeforeSettingsSaved() override;
+	void pushRecent(const char* path);
 
 	struct Undo;
 
@@ -127,6 +128,7 @@ private:
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
 	bool m_is_any_item_active = false;
+	Array<String> m_recent_paths;
 };
 
 

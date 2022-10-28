@@ -575,6 +575,10 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	void load(InputMemoryStream& blob) override {}
 
 	ShaderEditor::ValueType getOutputType(int) const override { 
+		switch (Type) {
+			case NodeType::DISTANCE:
+			case NodeType::DOT: return ShaderEditor::ValueType::FLOAT;
+		}
 		const Input input0 = getInput(m_editor, m_id, 0);
 		if (input0) return input0.node->getOutputType(input0.output_idx);
 		return ShaderEditor::ValueType::FLOAT;
@@ -595,6 +599,8 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	void generate(OutputMemoryStream& blob) const override {
 		const Input input0 = getInput(m_editor, m_id, 0);
 		const Input input1 = getInput(m_editor, m_id, 1);
+		if (input0) input0.node->generate(blob);
+		if (input1) input1.node->generate(blob);
 
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = " << getName() << "(";
 		if (input0) {
@@ -1275,11 +1281,26 @@ struct UniformNode : ShaderEditor::Node
 };
 
 void ShaderEditor::onSettingsLoaded() {
-	m_is_open = m_app.getSettings().getValue(Settings::GLOBAL, "is_shader_editor_open", false);
+	Settings& settings = m_app.getSettings();
+	m_is_open = settings.getValue(Settings::GLOBAL, "is_shader_editor_open", false);
+	char tmp[LUMIX_MAX_PATH];
+	m_recent_paths.clear();
+	for (u32 i = 0; ; ++i) {
+		const StaticString<32> key("shader_editor_recent_", i);
+		const u32 len = settings.getValue(Settings::LOCAL, key, Span(tmp));
+		if (len == 0) break;
+		m_recent_paths.emplace(tmp, m_app.getAllocator());
+	}
 }
 
 void ShaderEditor::onBeforeSettingsSaved() {
-	m_app.getSettings().setValue(Settings::GLOBAL, "is_shader_editor_open", m_is_open);
+	Settings& settings = m_app.getSettings();
+	settings.setValue(Settings::GLOBAL, "is_shader_editor_open", m_is_open);
+	for (const String& p : m_recent_paths) {
+		const u32 i = u32(&p - m_recent_paths.begin());
+		const StaticString<32> key("shader_editor_recent_", i);
+		settings.setValue(Settings::LOCAL, key, p.c_str());
+	}
 }
 
 ShaderEditor::ShaderEditor(StudioApp& app)
@@ -1292,6 +1313,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_undo_stack_idx(-1)
 	, m_is_focused(false)
 	, m_is_open(false)
+	, m_recent_paths(app.getAllocator())
 {
 	newGraph();
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
@@ -1491,6 +1513,8 @@ void ShaderEditor::save(const char* path) {
 	if (!success) {
 		logError("Could not save shader ", path);
 	}
+
+	pushRecent(path);
 }
 
 void ShaderEditor::save(OutputMemoryStream& blob) {
@@ -1599,6 +1623,10 @@ ShaderEditor::Node& ShaderEditor::loadNode(InputMemoryStream& blob) {
 void ShaderEditor::load() {
 	char path[LUMIX_MAX_PATH];
 	if (!os::getOpenFilename(Span(path), "Shader edit data\0*.sed\0", nullptr)) return;
+	load(path);
+}
+
+void ShaderEditor::load(const char* path) {
 	m_path = path;
 
 	clear();
@@ -1625,6 +1653,12 @@ void ShaderEditor::load() {
 	m_undo_stack.clear();
 	m_undo_stack_idx = -1;
 	saveUndo(0xffFF);
+	pushRecent(path);
+}
+
+void ShaderEditor::pushRecent(const char* path) {
+	m_recent_paths.eraseItems([&](const String& s) { return s == path; });
+	m_recent_paths.emplace(path, m_app.getAllocator());
 }
 
 bool ShaderEditor::load(InputMemoryStream& blob) {
@@ -1919,6 +1953,13 @@ void ShaderEditor::onGUIMenu()
 			if (ImGui::MenuItem("Save as")) {
 				if(getSavePath() && !m_path.isEmpty()) save(m_path.c_str());
 			}
+
+			if (ImGui::BeginMenu("Recent", !m_recent_paths.empty())) {
+				for (const String& s : m_recent_paths) {
+					if (ImGui::MenuItem(s.c_str())) load(s.c_str());
+				}
+				ImGui::EndMenu();
+			}
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
@@ -1932,20 +1973,6 @@ void ShaderEditor::onGUIMenu()
 		}
 
 		ImGui::EndMenuBar();
-	}
-
-	if (m_source_open) {
-		ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
-		if (ImGui::Begin("Shader source", &m_source_open)) {
-			if (m_source.length() == 0) {
-				ImGui::Text("Empty");
-			}
-			else {
-				ImGui::SetNextItemWidth(-1);
-				ImGui::InputTextMultiline("##src", m_source.getData(), m_source.length(), ImVec2(0, ImGui::GetContentRegionAvail().y), ImGuiInputTextFlags_ReadOnly);
-			}
-		}
-		ImGui::End();
 	}
 }
 
@@ -1969,6 +1996,19 @@ void ShaderEditor::deleteUnreachable() {
 
 void ShaderEditor::onWindowGUI()
 {
+	if (m_source_open) {
+		ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin("Shader source", &m_source_open)) {
+			if (m_source.length() == 0) {
+				ImGui::Text("Empty");
+			} else {
+				ImGui::SetNextItemWidth(-1);
+				ImGui::InputTextMultiline("##src", m_source.getData(), m_source.length(), ImVec2(0, ImGui::GetContentRegionAvail().y), ImGuiInputTextFlags_ReadOnly);
+			}
+		}
+		ImGui::End();
+	}
+
 	m_is_focused = false;
 	if (!m_is_open) return;
 
