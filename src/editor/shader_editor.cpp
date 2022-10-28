@@ -92,7 +92,10 @@ enum class NodeType {
 	TRANSPOSE,
 	TRUNC,
 
-	FRESNEL
+	FRESNEL,
+	LENGTH,
+	VIEW_DIR,
+	PIXEL_DEPTH
 };
 
 struct VertexOutput {
@@ -175,6 +178,8 @@ static const struct NodeTypeDesc {
 	{nullptr, "Number", NodeType::NUMBER},
 	{nullptr, "Swizzle", NodeType::SWIZZLE},
 	{nullptr, "Time", NodeType::TIME},
+	{nullptr, "View direction", NodeType::VIEW_DIR},
+	{nullptr, "Pixel depth", NodeType::PIXEL_DEPTH},
 	{nullptr, "Vertex ID", NodeType::VERTEX_ID},
 	{nullptr, "Mix", NodeType::MIX},
 	{nullptr, "If", NodeType::IF},
@@ -206,12 +211,13 @@ static const struct NodeTypeDesc {
 	{"Function", "Transpose", NodeType::TRANSPOSE},
 	{"Function", "Trunc", NodeType::TRUNC},
 
-	{"Function", "Dot", NodeType::DOT},
 	{"Function", "Cross", NodeType::CROSS},
-	{"Function", "Min", NodeType::MIN},
-	{"Function", "Max", NodeType::MAX},
-	{"Function", "Power", NodeType::POW},
 	{"Function", "Distance", NodeType::DISTANCE},
+	{"Function", "Dot", NodeType::DOT},
+	{"Function", "Length", NodeType::LENGTH},
+	{"Function", "Max", NodeType::MAX},
+	{"Function", "Min", NodeType::MIN},
+	{"Function", "Power", NodeType::POW},
 
 	{"Math", "Multiply", NodeType::MULTIPLY},
 	{"Math", "Add", NodeType::ADD},
@@ -543,6 +549,7 @@ struct FunctionCallNode : public ShaderEditor::Node
 	void load(InputMemoryStream& blob) override {}
 
 	ShaderEditor::ValueType getOutputType(int) const override { 
+		if (Type == NodeType::LENGTH) return ShaderEditor::ValueType::FLOAT;
 		const Input input0 = getInput(m_editor, m_id, 0);
 		if (input0) return input0.node->getOutputType(input0.output_idx);
 		return ShaderEditor::ValueType::FLOAT;
@@ -559,6 +566,7 @@ struct FunctionCallNode : public ShaderEditor::Node
 			case NodeType::EXP2: return "exp2";
 			case NodeType::FLOOR: return "floor";
 			case NodeType::FRACT: return "fract";
+			case NodeType::LENGTH: return "length";
 			case NodeType::LOG: return "log";
 			case NodeType::LOG2: return "log2";
 			case NodeType::NORMALIZE: return "normalize";
@@ -1147,10 +1155,20 @@ struct PBRNode : public ShaderEditor::Node
 			if (input) {
 				input.node->generate(blob);
 				blob << "\tdata." << field.name << " = ";
+				if (i < 2) blob << "vec3(";
 				input.printReference(blob);
 				const ShaderEditor::ValueType type = input.node->getOutputType(input.output_idx);
-				if (type != ShaderEditor::ValueType::VEC3 && i < 2) blob << ".rgb";
-				if (type != ShaderEditor::ValueType::FLOAT && i >= 2) blob << ".x";
+				if (i == 0) {
+					switch(type) {
+						case ShaderEditor::ValueType::VEC4: blob << ".rgb"; break;
+						case ShaderEditor::ValueType::VEC3: break;
+						case ShaderEditor::ValueType::VEC2: blob << ".rgr"; break;
+						case ShaderEditor::ValueType::FLOAT: break;
+					}
+				}
+				else if (type != ShaderEditor::ValueType::VEC3 && i < 2) blob << ".rgb";
+				else if (type != ShaderEditor::ValueType::FLOAT && i >= 2) blob << ".x";
+				if (i < 2) blob << ")";
 				blob << ";\n";
 			}
 			else {
@@ -1325,6 +1343,8 @@ struct UniformNode : ShaderEditor::Node
 	static const char* getVarName() {
 		switch (Type) {
 			case NodeType::TIME: return "Global.time";
+			case NodeType::VIEW_DIR: return "Pass.view_dir.xyz";
+			case NodeType::PIXEL_DEPTH: return "toLinearDepth(Pass.inv_projection, gl_FragCoord.z)";
 			default: ASSERT(false); return "Error";
 		}
 	}
@@ -1332,6 +1352,8 @@ struct UniformNode : ShaderEditor::Node
 	static const char* getName() {
 		switch (Type) {
 			case NodeType::TIME: return "Time";
+			case NodeType::VIEW_DIR: return "View direction";
+			case NodeType::PIXEL_DEPTH: return "Pixel depth";
 			default: ASSERT(false); return "Error";
 		}
 	}
@@ -1626,6 +1648,8 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::SUBTRACT:					return LUMIX_NEW(m_allocator, OperatorNode<NodeType::SUBTRACT>)(*this);
 		case NodeType::SWIZZLE:						return LUMIX_NEW(m_allocator, SwizzleNode)(*this);
 		case NodeType::TIME:						return LUMIX_NEW(m_allocator, UniformNode<NodeType::TIME>)(*this);
+		case NodeType::VIEW_DIR:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::VIEW_DIR>)(*this);
+		case NodeType::PIXEL_DEPTH:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::PIXEL_DEPTH>)(*this);
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
@@ -1659,6 +1683,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::TAN:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TAN>)(*this);
 		case NodeType::TRANSPOSE:					return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TRANSPOSE>)(*this);
 		case NodeType::TRUNC:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TRUNC>)(*this);
+		case NodeType::LENGTH:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::LENGTH>)(*this);
 
 		case NodeType::DOT:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::DOT>)(*this);
 		case NodeType::CROSS:						return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::CROSS>)(*this);
@@ -1913,6 +1938,7 @@ void ShaderEditor::onGUICanvas()
 				if (stristr(node_type.name, filter)) {
 					if (ImGui::MenuItem(node_type.name)) {
 						addNode(node_type.type, mp);
+						filter[0] = '\0';
 					}
 				}
 			}
