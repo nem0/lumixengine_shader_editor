@@ -290,7 +290,7 @@ static void	forEachInput(const ShaderEditor& editor, int node_id, const F& f) {
 			ShaderEditor::Node* from = editor.m_nodes[iter];
 			const u16 from_attr = toAttrIdx(link.from);
 			const u16 to_attr = toAttrIdx(link.to);
-			f(from, from_attr, to_attr);
+			f(from, from_attr, to_attr, u32(&link - editor.m_links.begin()));
 		}
 	}
 }
@@ -305,7 +305,7 @@ struct Input {
 
 static Input getInput(const ShaderEditor& editor, u16 node_id, u16 input_idx) {
 	Input res;
-	forEachInput(editor, node_id, [&](const ShaderEditor::Node* from, u16 from_attr, u16 to_attr){
+	forEachInput(editor, node_id, [&](const ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
 		if (to_attr == input_idx) {
 			res.output_idx = from_attr;
 			res.node = from;
@@ -1116,7 +1116,7 @@ struct PBRNode : public ShaderEditor::Node
 
 	static void generate(OutputMemoryStream& blob, const Node* node) {
 		if (!node) return;
-		forEachInput(node->m_editor, node->m_id, [&](const ShaderEditor::Node* from, u16 from_attr, u16 to_attr){
+		forEachInput(node->m_editor, node->m_id, [&](const ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
 			generate(blob, from);
 		});
 		node->generate(blob);
@@ -1459,8 +1459,36 @@ ShaderEditor::~ShaderEditor()
 void ShaderEditor::markReachable(Node* node) const {
 	node->m_reachable = true;
 
-	forEachInput(*this, node->m_id, [&](ShaderEditor::Node* from, u16 from_attr, u16 to_attr){
+	forEachInput(*this, node->m_id, [&](ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
 		markReachable(from);
+	});
+}
+
+void ShaderEditor::colorLinks(ImU32 color, u32 link_idx) {
+	m_links[link_idx].color = color;
+	const u32 from_node_id = toNodeId(m_links[link_idx].from);
+	for (u32 i = 0, c = m_links.size(); i < c; ++i) {
+		if (toNodeId(m_links[i].to) == from_node_id) colorLinks(color, i);
+	}
+}
+
+void ShaderEditor::colorLinks() {
+	const ImU32 colors[] = {
+		IM_COL32(0x20, 0x20, 0xA0, 255),
+		IM_COL32(0x20, 0xA0, 0x20, 255),
+		IM_COL32(0x20, 0xA0, 0xA0, 255),
+		IM_COL32(0xA0, 0x20, 0x20, 255),
+		IM_COL32(0xA0, 0x20, 0xA0, 255),
+		IM_COL32(0xA0, 0xA0, 0x20, 255),
+		IM_COL32(0xA0, 0xA0, 0xA0, 255),
+	};
+	
+	for (Link& l : m_links) {
+		l.color = IM_COL32(0xA0, 0xA0, 0xA0, 0xFF);
+	}
+
+	forEachInput(*this, m_nodes[0]->m_id, [&](ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx) {
+		colorLinks(colors[to_attr % lengthOf(colors)], link_idx);
 	});
 }
 
@@ -1474,6 +1502,7 @@ void ShaderEditor::markReachableNodes() const {
 void ShaderEditor::generate(const char* sed_path, bool save_file)
 {
 	markReachableNodes();
+	colorLinks();
 
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(32*1024);
@@ -1770,8 +1799,13 @@ bool ShaderEditor::load(InputMemoryStream& blob) {
 
 	blob.read(size);
 	m_links.resize(size);
-	blob.read(m_links.begin(), m_links.byte_size());
+	for (Link& l : m_links) {
+		blob.read(l.from);
+		blob.read(l.to);
+	}
 	markReachableNodes();
+	colorLinks();
+
 	return true;
 }
 
@@ -1854,18 +1888,7 @@ void ShaderEditor::onGUICanvas()
 	i32 hovered_link = -1;
 	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
 		const Link& link = m_links[i];
-		const ImU32 colors[] = {
-			IM_COL32(0x20, 0x20, 0xA0, 255),
-			IM_COL32(0x20, 0xA0, 0x20, 255),
-			IM_COL32(0x20, 0xA0, 0xA0, 255),
-			IM_COL32(0xA0, 0x20, 0x20, 255),
-			IM_COL32(0xA0, 0x20, 0xA0, 255),
-			IM_COL32(0xA0, 0xA0, 0x20, 255),
-			IM_COL32(0xA0, 0xA0, 0xA0, 255),
-		};
-		const u64 hash = RuntimeHash(&link, sizeof(link)).getHashValue();
-		const u64 color_idx = hash % lengthOf(colors);
-		ImGuiEx::NodeLinkEx(link.from | OUTPUT_FLAG, link.to, colors[color_idx], ImGui::GetColorU32(ImGuiCol_TabActive));
+		ImGuiEx::NodeLinkEx(link.from | OUTPUT_FLAG, link.to, link.color, ImGui::GetColorU32(ImGuiCol_TabActive));
 		if (ImGuiEx::IsLinkHovered()) {
 			hovered_link = i;
 		}
@@ -2071,6 +2094,7 @@ void ShaderEditor::onGUIMenu()
 
 void ShaderEditor::deleteUnreachable() {
 	markReachableNodes();
+	colorLinks();
 	for (i32 i = m_nodes.size() - 1; i >= 0; --i) {
 		Node* node = m_nodes[i];
 		if (!node->m_reachable) {

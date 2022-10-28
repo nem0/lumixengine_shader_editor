@@ -24,6 +24,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 	struct Link {
 		u32 from;
 		u32 to;
+		ImU32 color;
 	};
 
 	enum class ValueType : int
@@ -109,6 +110,8 @@ private:
 	void markReachable(Node* node) const;
 	void deleteUnreachable();
 	void pushRecent(const char* path);
+	void colorLinks();
+	void colorLinks(ImU32 color, u32 link_ix);
 
 	struct Undo;
 
