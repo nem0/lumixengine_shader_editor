@@ -35,6 +35,7 @@ enum class Version {
 
 static constexpr u32 OUTPUT_FLAG = 1 << 31;
 
+// serialized, do not change order
 enum class NodeType {
 	PBR,
 
@@ -54,18 +55,15 @@ enum class NodeType {
 	STATIC_SWITCH,
 	MIX,
 
-	// parameters
 	SCALAR_PARAM,
 	VEC4_PARAM,
 	COLOR_PARAM,
 
-	// operators
 	MULTIPLY,
 	ADD,
 	SUBTRACT,
 	DIVIDE,
 
-	// binary functions
 	DOT,
 	CROSS,
 	MIN,
@@ -73,7 +71,6 @@ enum class NodeType {
 	POW,
 	DISTANCE,
 	
-	// unary functions
 	ABS,
 	ALL,
 	ANY,
@@ -93,7 +90,9 @@ enum class NodeType {
 	SQRT,
 	TAN,
 	TRANSPOSE,
-	TRUNC
+	TRUNC,
+
+	FRESNEL
 };
 
 struct VertexOutput {
@@ -181,6 +180,7 @@ static const struct NodeTypeDesc {
 	{nullptr, "If", NodeType::IF},
 	{nullptr, "Static switch", NodeType::STATIC_SWITCH},
 	{nullptr, "Append", NodeType::APPEND},
+	{nullptr, "Fresnel", NodeType::FRESNEL},
 	{nullptr, "Scalar parameter", NodeType::SCALAR_PARAM},
 	{nullptr, "Color parameter", NodeType::COLOR_PARAM},
 	{nullptr, "Vec4 parameter", NodeType::VEC4_PARAM},
@@ -497,6 +497,41 @@ struct SwizzleNode : public ShaderEditor::Node
 	StaticString<5> m_swizzle;
 };
 
+struct FresnelNode : public ShaderEditor::Node {
+	explicit FresnelNode(ShaderEditor& editor)
+		: Node(NodeType::FRESNEL, editor)
+	{}
+
+	void save(OutputMemoryStream&blob) override {
+		blob.write(F0);
+		blob.write(power);
+	}
+
+	void load(InputMemoryStream&blob) override {
+		blob.read(F0);
+		blob.read(power);
+	}
+
+	bool onGUI() override {
+		ImGuiEx::BeginNodeTitleBar();
+		ImGui::TextUnformatted("Fresnel");
+		ImGuiEx::EndNodeTitleBar();
+
+		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		ImGui::DragFloat("F0", &F0);
+		ImGui::DragFloat("Power", &power);
+		return false;
+	}
+
+	void generate(OutputMemoryStream& blob) const override {
+		// TODO use data.normal instead of v_normal
+		blob << "float v" << m_id << " = mix(" << F0 << ", 1.0, pow(1 - saturate(dot(-normalize(v_wpos.xyz), v_normal)), " << power << "));\n";
+	}
+
+	float F0 = 0.04f;
+	float power = 5.0f;
+};
+
 template <NodeType Type>
 struct FunctionCallNode : public ShaderEditor::Node
 {
@@ -655,7 +690,7 @@ struct VaryingNode : public ShaderEditor::Node {
 
 	void printReference(OutputMemoryStream& blob, int output_idx) const {
 		switch(Type) {
-			case NodeType::POSITION: blob << "v_wpos"; break;
+			case NodeType::POSITION: blob << "v_wpos.xyz"; break;
 			case NodeType::NORMAL: blob << "v_normal"; break;
 			case NodeType::UV0: blob << "v_uv"; break;
 			default: ASSERT(false); break;
@@ -714,18 +749,50 @@ struct ConstNode : public ShaderEditor::Node
 
 	ShaderEditor::ValueType getOutputType(int) const override { return m_type; }
 
-	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
+	void printInputValue(u32 idx, OutputMemoryStream& blob) const {
+		const Input input = getInput(m_editor, m_id, idx);
+		if (input) {
+			input.printReference(blob);
+			return;
+		}
+		blob << m_value[idx];
+	}
+
+	void generate(OutputMemoryStream& blob) const override {
+		for (u32 i = 0; i < 4; ++i) {
+			const Input input = getInput(m_editor, m_id, i);
+			if (input) input.node->generate(blob);
+		}
+	}
+
+	void printReference(OutputMemoryStream& blob, int output_idx) const override {
 		switch(m_type) {
 			case ShaderEditor::ValueType::VEC4:
-				blob << "vec4(" << m_value[0] << ", " << m_value[1] << ", "
-					<< m_value[2] << ", " << m_value[3] << ")";
+				blob << "vec4(";
+				printInputValue(0, blob);
+				blob << ", "; 
+				printInputValue(1, blob);
+				blob << ", "; 
+				printInputValue(2, blob);
+				blob << ", "; 
+				printInputValue(3, blob);
+				blob << ")";
 				break;
 			case ShaderEditor::ValueType::VEC3:
-				blob << "vec3(" << m_value[0] << ", " << m_value[1] << ", "
-					<< m_value[2] << ")";
+				blob << "vec3(";
+				printInputValue(0, blob);
+				blob << ", "; 
+				printInputValue(1, blob);
+				blob << ", "; 
+				printInputValue(2, blob);
+				blob << ")";
 				break;
 			case ShaderEditor::ValueType::VEC2:
-				blob << "vec2(" << m_value[0] << ", " << m_value[1] << ")";
+				blob << "vec2(";
+				printInputValue(0, blob);
+				blob << ", "; 
+				printInputValue(1, blob);
+				blob << ")";
 				break;
 			case ShaderEditor::ValueType::INT:
 				blob << m_int_value;
@@ -743,9 +810,19 @@ struct ConstNode : public ShaderEditor::Node
 		const char* labels[] = { "X", "Y", "Z", "W" };
 
 		ImGui::BeginGroup();
+		u32 channels_count = 0;
+		switch (m_type) {
+			case ShaderEditor::ValueType::VEC4: channels_count = 4; break;
+			case ShaderEditor::ValueType::VEC3: channels_count = 3; break;
+			case ShaderEditor::ValueType::VEC2: channels_count = 2; break;
+			default: channels_count = 1; break;
+		}
+			
 		switch(m_type) {
 			case ShaderEditor::ValueType::VEC4:
-				for (u16 i = 0; i < 4; ++i) {
+			case ShaderEditor::ValueType::VEC3:
+			case ShaderEditor::ValueType::VEC2:
+				for (u16 i = 0; i < channels_count; ++i) {
 					ImGuiEx::Pin(m_id | (i << 16), true);
 					if (isInputConnected(m_editor, m_id, i)) {
 						ImGui::TextUnformatted(labels[i]);
@@ -754,36 +831,23 @@ struct ConstNode : public ShaderEditor::Node
 						res = ImGui::DragFloat(labels[i], &m_value[i]);
 					}
 				}
-				ImGui::Checkbox("Color", &m_is_color);
-				if (m_is_color) {
-					res = ImGui::ColorPicker4("##col", m_value) || res; 
+				switch (m_type) {
+					case ShaderEditor::ValueType::VEC4:
+					case ShaderEditor::ValueType::VEC3:
+						ImGui::Checkbox("Color", &m_is_color);
+						if (m_is_color) {
+							res = ImGui::ColorPicker4("##col", m_value) || res; 
+						}
+						break;
 				}
-				break;
-			case ShaderEditor::ValueType::VEC3:
-				ImGuiEx::Pin(m_id | (1 << 16), true);
-				res = ImGui::DragFloat("x", &m_value[0]);
-				ImGuiEx::Pin(m_id | (2 << 16), true);
-				res = ImGui::DragFloat("y", &m_value[1]) || res;
-				ImGuiEx::Pin(m_id | (3 << 16), true);
-				res = ImGui::DragFloat("z", &m_value[2]) || res;
-				ImGui::Checkbox("Color", &m_is_color);
-				if (m_is_color) {
-					res = ImGui::ColorPicker3("##col", m_value) || res; 
-				}
-				break;
-			case ShaderEditor::ValueType::VEC2:
-				ImGuiEx::Pin(m_id | (1 << 16), true);
-				res = ImGui::DragFloat("x", &m_value[0]);
-				ImGuiEx::Pin(m_id | (2 << 16), true);
-				res = ImGui::DragFloat("y", &m_value[1]) || res;
 				break;
 			case ShaderEditor::ValueType::FLOAT:
 				ImGui::SetNextItemWidth(60);
-				res = ImGui::InputFloat("", m_value) || res;
+				res = ImGui::DragFloat("##val", m_value) || res;
 				break;
 			case ShaderEditor::ValueType::INT:
 				ImGui::SetNextItemWidth(60);
-				res = ImGui::InputInt("", &m_int_value) || res;
+				res = ImGui::InputInt("##val", &m_int_value) || res;
 				break;
 			default: ASSERT(false); break;
 		}
@@ -1540,6 +1604,7 @@ void ShaderEditor::clear()
 		LUMIX_DELETE(m_allocator, node);
 	}
 	m_nodes.clear();
+	m_links.clear();
 
 	m_undo_stack.clear();
 	m_undo_stack_idx = -1;
@@ -1565,6 +1630,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
 		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
+		case NodeType::FRESNEL:						return LUMIX_NEW(m_allocator, FresnelNode)(*this);
 		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
 		case NodeType::NORMAL:						return LUMIX_NEW(m_allocator, VaryingNode<NodeType::NORMAL>)(*this);
 		case NodeType::UV0:							return LUMIX_NEW(m_allocator, VaryingNode<NodeType::UV0>)(*this);
@@ -1657,8 +1723,9 @@ void ShaderEditor::load(const char* path) {
 }
 
 void ShaderEditor::pushRecent(const char* path) {
+	String p(path, m_app.getAllocator());
 	m_recent_paths.eraseItems([&](const String& s) { return s == path; });
-	m_recent_paths.emplace(path, m_app.getAllocator());
+	m_recent_paths.push(static_cast<String&&>(p));
 }
 
 bool ShaderEditor::load(InputMemoryStream& blob) {
