@@ -1915,12 +1915,12 @@ void ShaderEditor::onGUICanvas()
 	{
 		ImGuiID start_attr, end_attr;
 		if (ImGuiEx::GetNewLink(&start_attr, &end_attr)) {
-			if (start_attr & OUTPUT_FLAG) {
-				m_links.push({u32(start_attr) & ~OUTPUT_FLAG, u32(end_attr)});
-			} else {
-				m_links.push({u32(start_attr), u32(end_attr) & ~OUTPUT_FLAG});
-			}
+			ASSERT(start_attr & OUTPUT_FLAG);
+			m_links.eraseItems([&](const Link& link) { return link.to == end_attr; });
+			m_links.push({u32(start_attr) & ~OUTPUT_FLAG, u32(end_attr)});
+			
 			saveUndo(0xffFF);
+			colorLinks();
 		}
 	}
 
