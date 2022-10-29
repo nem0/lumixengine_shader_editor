@@ -95,7 +95,9 @@ enum class NodeType {
 	FRESNEL,
 	LENGTH,
 	VIEW_DIR,
-	PIXEL_DEPTH
+	PIXEL_DEPTH,
+	SCREEN_POSITION,
+	SCENE_DEPTH
 };
 
 struct VertexOutput {
@@ -180,6 +182,8 @@ static const struct NodeTypeDesc {
 	{nullptr, "Time", NodeType::TIME},
 	{nullptr, "View direction", NodeType::VIEW_DIR},
 	{nullptr, "Pixel depth", NodeType::PIXEL_DEPTH},
+	{nullptr, "Scene depth", NodeType::SCENE_DEPTH},
+	{nullptr, "Screen position", NodeType::SCREEN_POSITION},
 	{nullptr, "Vertex ID", NodeType::VERTEX_ID},
 	{nullptr, "Mix", NodeType::MIX},
 	{nullptr, "If", NodeType::IF},
@@ -886,8 +890,9 @@ struct SampleNode : public ShaderEditor::Node
 	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC4; }
 
 	void generate(OutputMemoryStream& blob) const override {
-		blob << "\t\tvec4 v" << m_id << " = ";
 		const Input input0 = getInput(m_editor, m_id, 0);
+		if (input0) input0.node->generate(blob);
+		blob << "\t\tvec4 v" << m_id << " = ";
 		char var_name[64];
 		Shader::toTextureVarName(Span(var_name), m_texture.c_str());
 		blob << "texture(" << var_name << ", ";
@@ -1337,6 +1342,10 @@ struct UniformNode : ShaderEditor::Node
 
 	ShaderEditor::ValueType getOutputType(int) const override
 	{
+		switch (Type) {
+			case NodeType::SCREEN_POSITION: return ShaderEditor::ValueType::VEC2;
+			case NodeType::VIEW_DIR: return ShaderEditor::ValueType::VEC3;
+		}
 		return ShaderEditor::ValueType::FLOAT;
 	}
 
@@ -1345,6 +1354,8 @@ struct UniformNode : ShaderEditor::Node
 			case NodeType::TIME: return "Global.time";
 			case NodeType::VIEW_DIR: return "Pass.view_dir.xyz";
 			case NodeType::PIXEL_DEPTH: return "toLinearDepth(Pass.inv_projection, gl_FragCoord.z)";
+			case NodeType::SCENE_DEPTH: return "toLinearDepth(Pass.inv_projection, texture(u_depthbuffer, gl_FragCoord.xy / Global.framebuffer_size).x)";
+			case NodeType::SCREEN_POSITION: return "(gl_FragCoord.xy / Global.framebuffer_size)";
 			default: ASSERT(false); return "Error";
 		}
 	}
@@ -1354,6 +1365,8 @@ struct UniformNode : ShaderEditor::Node
 			case NodeType::TIME: return "Time";
 			case NodeType::VIEW_DIR: return "View direction";
 			case NodeType::PIXEL_DEPTH: return "Pixel depth";
+			case NodeType::SCENE_DEPTH: return "Scene depth";
+			case NodeType::SCREEN_POSITION: return "Screen position";
 			default: ASSERT(false); return "Error";
 		}
 	}
@@ -1646,7 +1659,10 @@ void ShaderEditor::save(OutputMemoryStream& blob) {
 
 	const i32 links_count = m_links.size();
 	blob.write(links_count);
-	blob.write(m_links.begin(), m_links.byte_size());
+	for (Link& l : m_links) {
+		blob.write(l.from);
+		blob.write(l.to);
+	}
 }
 
 void ShaderEditor::clear()
@@ -1679,6 +1695,8 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::TIME:						return LUMIX_NEW(m_allocator, UniformNode<NodeType::TIME>)(*this);
 		case NodeType::VIEW_DIR:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::VIEW_DIR>)(*this);
 		case NodeType::PIXEL_DEPTH:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::PIXEL_DEPTH>)(*this);
+		case NodeType::SCENE_DEPTH:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::SCENE_DEPTH>)(*this);
+		case NodeType::SCREEN_POSITION:				return LUMIX_NEW(m_allocator, UniformNode<NodeType::SCREEN_POSITION>)(*this);
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
