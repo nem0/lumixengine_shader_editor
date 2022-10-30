@@ -335,10 +335,36 @@ ShaderEditor::Node::Node(NodeType type, ShaderEditor& editor)
 {
 }
 
+void ShaderEditor::Node::inputSlot() {
+	ImGuiEx::Pin(m_id | (m_input_count << 16), true);
+	++m_input_count;
+}
+
+void ShaderEditor::Node::outputSlot() {
+	ImGuiEx::Pin(m_id | (m_output_count << 16) | OUTPUT_FLAG, false);
+	++m_output_count;
+}
+
+bool ShaderEditor::Node::onNodeGUI() {
+	ImGuiEx::BeginNode(m_id, m_pos, &m_selected);
+	m_input_count = 0;
+	m_output_count = 0;
+	bool res = onGUI();
+	ImGuiEx::EndNode();
+
+	ASSERT((m_input_count > 0) == hasInputPins());
+	ASSERT((m_output_count > 0) == hasOutputPins());
+
+	return res;
+}
+
 struct MixNode : public ShaderEditor::Node {
 	explicit MixNode(ShaderEditor& editor)
 		: Node(NodeType::MIX, editor)
 	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 
 	bool onGUI() override {
 		ImGuiEx::BeginNodeTitleBar();
@@ -346,13 +372,13 @@ struct MixNode : public ShaderEditor::Node {
 		ImGuiEx::EndNodeTitleBar();
 
 		ImGui::BeginGroup();
-		ImGuiEx::Pin(m_id, true); ImGui::TextUnformatted("A");
-		ImGuiEx::Pin(m_id | (1 << 16), true); ImGui::TextUnformatted("B");
-		ImGuiEx::Pin(m_id | (2 << 16), true); ImGui::TextUnformatted("Weight");
+		inputSlot(); ImGui::TextUnformatted("A");
+		inputSlot(); ImGui::TextUnformatted("B");
+		inputSlot(); ImGui::TextUnformatted("Weight");
 		ImGui::EndGroup();
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		return false;
 	}
 
@@ -382,6 +408,9 @@ struct OperatorNode : public ShaderEditor::Node {
 	explicit OperatorNode(ShaderEditor& editor)
 		: Node(Type, editor)
 	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override { blob.write(b_val); }
 	void load(InputMemoryStream& blob) override { blob.read(b_val); }
@@ -441,11 +470,10 @@ struct OperatorNode : public ShaderEditor::Node {
 		ImGui::TextUnformatted(getName());
 		ImGuiEx::EndNodeTitleBar();
 
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
+		inputSlot(); ImGui::Text("A");
 
-		ImGuiEx::Pin(m_id, true); ImGui::Text("A");
-
-		ImGuiEx::Pin(m_id | (1 << 16), true);
+		inputSlot();
 		if (isInputConnected(m_editor, m_id, 1)) {
 			ImGui::Text("B");
 		}
@@ -466,6 +494,9 @@ struct SwizzleNode : public ShaderEditor::Node
 	{
 		m_swizzle = "xyzw";
 	}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 	
 	void save(OutputMemoryStream& blob) override { blob.write(m_swizzle); }
 	void load(InputMemoryStream& blob) override { blob.read(m_swizzle); }
@@ -496,11 +527,11 @@ struct SwizzleNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		bool res = ImGui::InputTextWithHint("", "swizzle", m_swizzle.data, sizeof(m_swizzle.data));
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(u32(m_id) | OUTPUT_FLAG, false);
+		outputSlot();
 		return res;
 	}
 
@@ -511,6 +542,9 @@ struct FresnelNode : public ShaderEditor::Node {
 	explicit FresnelNode(ShaderEditor& editor)
 		: Node(NodeType::FRESNEL, editor)
 	{}
+
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream&blob) override {
 		blob.write(F0);
@@ -527,7 +561,7 @@ struct FresnelNode : public ShaderEditor::Node {
 		ImGui::TextUnformatted("Fresnel");
 		ImGuiEx::EndNodeTitleBar();
 
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		ImGui::DragFloat("F0", &F0);
 		ImGui::DragFloat("Power", &power);
 		return false;
@@ -548,6 +582,9 @@ struct FunctionCallNode : public ShaderEditor::Node
 	explicit FunctionCallNode(ShaderEditor& editor)
 		: Node(Type, editor)
 	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
@@ -602,10 +639,10 @@ struct FunctionCallNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		ImGui::TextUnformatted(getName());
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		return false;
 	}
 };
@@ -617,6 +654,9 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 		: Node(Type, editor)
 	{
 	}
+	
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
@@ -671,12 +711,12 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 		ImGui::TextUnformatted(getName());
 		ImGuiEx::EndNodeTitleBar();
 		ImGui::BeginGroup();
-		ImGuiEx::Pin(m_id, true); ImGui::Text("A");
-		ImGuiEx::Pin(m_id | (1 << 16), true); ImGui::Text("B");
+		inputSlot(); ImGui::Text("A");
+		inputSlot(); ImGui::Text("B");
 		ImGui::EndGroup();
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		return false;
 	}
 };
@@ -687,6 +727,9 @@ struct VaryingNode : public ShaderEditor::Node {
 	explicit VaryingNode(ShaderEditor& editor)
 		: Node(Type, editor)
 	{}
+
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream&) override {}
 	void load(InputMemoryStream&) override {}
@@ -711,7 +754,7 @@ struct VaryingNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		switch(Type) {
 			case NodeType::POSITION: ImGui::Text("Position"); break;
 			case NodeType::NORMAL: ImGui::Text("Normal"); break;
@@ -835,7 +878,7 @@ struct ConstNode : public ShaderEditor::Node
 			case ShaderEditor::ValueType::VEC3:
 			case ShaderEditor::ValueType::VEC2:
 				for (u16 i = 0; i < channels_count; ++i) {
-					ImGuiEx::Pin(m_id | (i << 16), true);
+					inputSlot();
 					if (isInputConnected(m_editor, m_id, i)) {
 						ImGui::TextUnformatted(labels[i]);
 					}
@@ -866,10 +909,22 @@ struct ConstNode : public ShaderEditor::Node
 		ImGui::EndGroup();
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 
 		return res;
 	}
+
+	bool hasInputPins() const override { 
+		switch (m_type) {
+			case ShaderEditor::ValueType::VEC4:
+			case ShaderEditor::ValueType::VEC3:
+			case ShaderEditor::ValueType::VEC2:
+				return true;
+		}
+		return false;
+	}
+
+	bool hasOutputPins() const override { return true; }
 
 	ShaderEditor::ValueType m_type;
 	bool m_is_color = false;
@@ -884,6 +939,9 @@ struct SampleNode : public ShaderEditor::Node
 		: Node(NodeType::SAMPLE, editor)
 		, m_texture(editor.getAllocator())
 	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override { blob.writeString(m_texture.c_str()); }
 	void load(InputMemoryStream& blob) override { m_texture = blob.readString(); }
@@ -902,11 +960,11 @@ struct SampleNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		ImGui::Text("UV");
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		char tmp[128];
 		copyString(tmp, m_texture.c_str());
 		bool res = ImGui::InputText("Texture", tmp, sizeof(tmp));
@@ -922,20 +980,23 @@ struct AppendNode : public ShaderEditor::Node {
 	: Node(NodeType::APPEND, editor)
 	{}
 	
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+
 	bool onGUI() override {
 		ImGuiEx::BeginNodeTitleBar();
 		ImGui::TextUnformatted("Append");
 		ImGuiEx::EndNodeTitleBar();
 
 		ImGui::BeginGroup();
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		ImGui::TextUnformatted("A");
-		ImGuiEx::Pin(m_id | (1 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("B");
 		ImGui::EndGroup();
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		return false;
 	}
 
@@ -1004,20 +1065,23 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 		, m_define(editor.getAllocator())
 	{}
 
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+
 	bool onGUI() override {
 		ImGuiEx::BeginNodeTitleBar();
 		ImGui::TextUnformatted("Static switch");
 		ImGuiEx::EndNodeTitleBar();
 		
 		ImGui::BeginGroup();
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		ImGui::TextUnformatted("True");
-		ImGuiEx::Pin(m_id | (1 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("False");
 		ImGui::EndGroup();
 
 		ImGui::SameLine();
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		char tmp[128];
 		copyString(tmp, m_define.c_str());
 		ImGui::SetNextItemWidth(80);
@@ -1027,7 +1091,6 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 	}
 
 	void save(OutputMemoryStream& blob) override { blob.write(m_is_on); }
-	
 	void load(InputMemoryStream& blob) override { blob.read(m_is_on); }
 	
 	const char* getOutputTypeName() const {
@@ -1073,6 +1136,9 @@ struct ParameterNode : public ShaderEditor::Node {
 		, m_name(editor.getAllocator())
 	{}
 
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
+
 	void save(OutputMemoryStream& blob) { blob.writeString(m_name.c_str()); }
 	void load(InputMemoryStream& blob) { m_name = blob.readString(); }
 
@@ -1086,7 +1152,7 @@ struct ParameterNode : public ShaderEditor::Node {
 		}
 		ImGuiEx::EndNodeTitleBar();
 		
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		char tmp[128];
 		copyString(tmp, m_name.c_str());
 		bool res = ImGui::InputText("##name", tmp, sizeof(tmp));
@@ -1116,8 +1182,8 @@ struct PBRNode : public ShaderEditor::Node
 		: Node(NodeType::PBR, editor)
 	{}
 
-	void save(OutputMemoryStream& blob) {}
-	void load(InputMemoryStream& blob) {}
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return false; }
 
 	static void generate(OutputMemoryStream& blob, const Node* node) {
 		if (!node) return;
@@ -1187,31 +1253,31 @@ struct PBRNode : public ShaderEditor::Node
 		ImGui::Text("PBR");
 		ImGuiEx::EndNodeTitleBar();
 		
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		ImGui::TextUnformatted("Albedo");
 
-		ImGuiEx::Pin(m_id | (1 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Normal");
 
-		ImGuiEx::Pin(m_id | (2 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Opacity");
 
-		ImGuiEx::Pin(m_id | (3 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Roughness");
 
-		ImGuiEx::Pin(m_id | (4 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Metallic");
 
-		ImGuiEx::Pin(m_id | (5 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Emission");
 
-		ImGuiEx::Pin(m_id | (6 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("AO");
 
-		ImGuiEx::Pin(m_id | (7 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Translucency");
 
-		ImGuiEx::Pin(m_id | (8 << 16), true);
+		inputSlot();
 		ImGui::TextUnformatted("Shadow");
 
 		return false;
@@ -1224,6 +1290,9 @@ struct IfNode : public ShaderEditor::Node
 		: Node(NodeType::IF, editor)
 	{
 	}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
@@ -1275,25 +1344,25 @@ struct IfNode : public ShaderEditor::Node
 
 	bool onGUI() override {
 		ImGui::BeginGroup();
-		ImGuiEx::Pin(m_id, true);
+		inputSlot();
 		ImGui::Text("A");
 		
-		ImGuiEx::Pin(m_id | (1 << 16), true);
+		inputSlot();
 		ImGui::Text("B");
 
-		ImGuiEx::Pin(m_id | (2 << 16), true);
+		inputSlot();
 		ImGui::Text("A > B");
 
-		ImGuiEx::Pin(m_id | (3 << 16), true);
+		inputSlot();
 		ImGui::Text("A == B");
 
-		ImGuiEx::Pin(m_id | (4 << 16), true);
+		inputSlot();
 		ImGui::Text("A < B");
 		ImGui::EndGroup();
 
 		ImGui::SameLine();
 
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		ImGui::TextUnformatted("Output");
 
 		return false;
@@ -1305,6 +1374,9 @@ struct VertexIDNode : ShaderEditor::Node
 	explicit VertexIDNode(ShaderEditor& editor)
 		: Node(NodeType::VERTEX_ID, editor)
 	{}
+
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
@@ -1319,7 +1391,7 @@ struct VertexIDNode : ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		ImGui::Text("Vertex ID");
 		return false;
 	}
@@ -1331,6 +1403,9 @@ struct UniformNode : ShaderEditor::Node
 	explicit UniformNode(ShaderEditor& editor)
 		: Node(Type, editor)
 	{}
+
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
 
 	void save(OutputMemoryStream& blob) override {}
 	void load(InputMemoryStream& blob) override {}
@@ -1373,7 +1448,7 @@ struct UniformNode : ShaderEditor::Node
 
 	bool onGUI() override
 	{
-		ImGuiEx::Pin(m_id | OUTPUT_FLAG, false);
+		outputSlot();
 		ImGui::TextUnformatted(getName());
 		return false;
 	}
@@ -1856,6 +1931,15 @@ void ShaderEditor::addNode(NodeType node_type, ImVec2 pos) {
 	n->m_id = ++m_last_node_id;
 	n->m_pos = pos;
 	m_nodes.push(n);
+	if (m_half_link_start) {
+		if (m_half_link_start & OUTPUT_FLAG) {
+			if (n->hasInputPins()) m_links.push({u32(m_half_link_start) & ~OUTPUT_FLAG, u32(n->m_id)});
+		}
+		else {
+			if (n->hasOutputPins()) m_links.push({u32(n->m_id), u32(m_half_link_start)});
+		}
+		m_half_link_start = 0;
+	}
 	saveUndo(0xffFF);
 }
 
@@ -1886,22 +1970,30 @@ void ShaderEditor::onGUICanvas()
 	static ImVec2 offset = ImVec2(0, 0);
 	ImGuiEx::BeginNodeEditor("shader_editor", &offset);
 	const ImVec2 origin = ImGui::GetCursorScreenPos();
-		
+
+	ImGuiID moved = 0;
+	u32 moved_count = 0;
 	for (Node*& node : m_nodes) {
 		const bool reachable = node->m_reachable;
 		if (!reachable) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
 		
 		const ImVec2 old_pos = node->m_pos;
-		ImGuiEx::BeginNode(node->m_id, node->m_pos, &node->m_selected);
-		if (node->onGUI()) {
+		if (node->onNodeGUI()) {
 			saveUndo(node->m_id);
 		}
-		ImGuiEx::EndNode();
 		if (old_pos.x != node->m_pos.x || old_pos.y != node->m_pos.y) {
-			saveUndo(node->m_id);
+			moved = node->m_id;
+			++moved_count;
 		}
 		if (!reachable) ImGui::PopStyleVar();
 	}
+
+	if (moved_count > 0) {
+		if (moved_count > 1) saveUndo(0xffFE);
+		else saveUndo(moved);
+	}
+
+	bool open_context = false;
 
 	i32 hovered_link = -1;
 	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
@@ -1914,6 +2006,12 @@ void ShaderEditor::onGUICanvas()
 
 	{
 		ImGuiID start_attr, end_attr;
+		if (ImGuiEx::GetHalfLink(&start_attr)) {
+			open_context = true;
+			m_context_pos = ImGui::GetMousePos() - offset;
+			m_half_link_start = start_attr;
+		}
+
 		if (ImGuiEx::GetNewLink(&start_attr, &end_attr)) {
 			ASSERT(start_attr & OUTPUT_FLAG);
 			m_links.eraseItems([&](const Link& link) { return link.to == end_attr; });
@@ -1962,11 +2060,13 @@ void ShaderEditor::onGUICanvas()
 		}
 	}
 
-	bool open_context = false;
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
-		ImGui::OpenPopup("context_menu");
 		open_context = true;
+		m_context_pos = ImGui::GetMousePos() - offset;
+		m_half_link_start = 0;
 	}
+
+	if (open_context) ImGui::OpenPopup("context_menu");
 
 	if(ImGui::BeginPopup("context_menu")) {
 		static char filter[64] = "";
@@ -1977,15 +2077,17 @@ void ShaderEditor::onGUICanvas()
 		if (filter[0]) {
 			for (const auto& node_type : NODE_TYPES) {
 				if (stristr(node_type.name, filter)) {
-					if (ImGui::MenuItem(node_type.name)) {
-						addNode(node_type.type, mp);
+					if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(node_type.name)) {
+						addNode(node_type.type, m_context_pos);
 						filter[0] = '\0';
+						ImGui::CloseCurrentPopup();
+						break;
 					}
 				}
 			}
 		}
 		else {
-			nodeGroupUI(*this, Span(NODE_TYPES), mp);
+			nodeGroupUI(*this, Span(NODE_TYPES), m_context_pos);
 		}
 
 		ImGui::EndPopup();

@@ -53,15 +53,26 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		virtual void printReference(OutputMemoryStream& blob, int output_idx) const;
 		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
 		virtual ValueType getInputType(int index) const { return ValueType::FLOAT; }
-		virtual bool onGUI() = 0;
+		virtual bool hasInputPins() const = 0;
+		virtual bool hasOutputPins() const = 0;
+
+		bool onNodeGUI();
+
+		void inputSlot();
+		void outputSlot();
 
 		u16 m_id;
 		ImVec2 m_pos;
 		bool m_selected = false;
 		bool m_reachable = false;
+		u32 m_input_count = 0;
+		u32 m_output_count = 0;
 
 		NodeType m_type;
 		ShaderEditor& m_editor;
+
+	protected:
+		virtual bool onGUI() = 0;
 	};
 
 	explicit ShaderEditor(struct StudioApp& app);
@@ -132,6 +143,8 @@ private:
 	bool m_source_open = false;
 	bool m_is_any_item_active = false;
 	Array<String> m_recent_paths;
+	ImGuiID m_half_link_start = 0;
+	ImVec2 m_context_pos;
 };
 
 
