@@ -27,7 +27,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		ImU32 color;
 	};
 
-	enum class ValueType : int
+	enum class ValueType : i32
 	{
 		BOOL,
 		FLOAT,
@@ -49,7 +49,6 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 
 		virtual void serialize(OutputMemoryStream&blob) {}
 		virtual void deserialize(InputMemoryStream&blob) {}
-		virtual void generate(OutputMemoryStream&blob) const {}
 		virtual void printReference(OutputMemoryStream& blob, int output_idx) const;
 		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
 		virtual ValueType getInputType(int index) const { return ValueType::FLOAT; }
@@ -57,6 +56,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		virtual bool hasOutputPins() const = 0;
 
 		bool onNodeGUI();
+		void generateOnce(OutputMemoryStream& blob);
 
 		void inputSlot();
 		void outputSlot();
@@ -65,6 +65,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		ImVec2 m_pos;
 		bool m_selected = false;
 		bool m_reachable = false;
+		bool m_generated = false;
 		u32 m_input_count = 0;
 		u32 m_output_count = 0;
 
@@ -72,6 +73,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		ShaderEditor& m_editor;
 
 	protected:
+		virtual void generate(OutputMemoryStream& blob) {}
 		virtual bool onGUI() = 0;
 	};
 

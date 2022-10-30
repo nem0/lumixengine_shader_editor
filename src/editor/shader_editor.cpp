@@ -99,6 +99,7 @@ enum class NodeType {
 	SCREEN_POSITION,
 	SCENE_DEPTH,
 	ONEMINUS,
+	CODE
 };
 
 struct VertexOutput {
@@ -190,6 +191,7 @@ static const struct NodeTypeDesc {
 	{nullptr, "If", NodeType::IF},
 	{nullptr, "Static switch", NodeType::STATIC_SWITCH},
 	{nullptr, "One minus", NodeType::ONEMINUS},
+	{nullptr, "Custom code", NodeType::CODE},
 	{nullptr, "Append", NodeType::APPEND},
 	{nullptr, "Fresnel", NodeType::FRESNEL},
 	{nullptr, "Scalar parameter", NodeType::SCALAR_PARAM},
@@ -302,7 +304,7 @@ static void	forEachInput(const ShaderEditor& editor, int node_id, const F& f) {
 }
 
 struct Input {
-	const ShaderEditor::Node* node = nullptr;
+	ShaderEditor::Node* node = nullptr;
 	u16 output_idx;
 
 	void printReference(OutputMemoryStream& blob) const { node->printReference(blob, output_idx); }
@@ -311,13 +313,23 @@ struct Input {
 
 static Input getInput(const ShaderEditor& editor, u16 node_id, u16 input_idx) {
 	Input res;
-	forEachInput(editor, node_id, [&](const ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
+	forEachInput(editor, node_id, [&](ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
 		if (to_attr == input_idx) {
 			res.output_idx = from_attr;
 			res.node = from;
 		}
 	});
 	return res;
+}
+
+static bool isOutputConnected(const ShaderEditor& editor, u16 node_id, u16 input_idx) {
+	for (const ShaderEditor::Link& link : editor.m_links) {
+		if (toNodeId(link.from) == node_id) {
+			const u16 from_attr = toAttrIdx(link.from);
+			if (from_attr == input_idx) return true;
+		}
+	}
+	return false;
 }
 
 static bool isInputConnected(const ShaderEditor& editor, u16 node_id, u16 input_idx) {
@@ -345,6 +357,12 @@ void ShaderEditor::Node::inputSlot() {
 void ShaderEditor::Node::outputSlot() {
 	ImGuiEx::Pin(m_id | (m_output_count << 16) | OUTPUT_FLAG, false);
 	++m_output_count;
+}
+
+void ShaderEditor::Node::generateOnce(OutputMemoryStream& blob) {
+	if (m_generated) return;
+	m_generated = true;
+	generate(blob);
 }
 
 bool ShaderEditor::Node::onNodeGUI() {
@@ -382,14 +400,14 @@ struct MixNode : public ShaderEditor::Node {
 		return false;
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_editor, m_id, 0);
 		const Input input1 = getInput(m_editor, m_id, 1);
 		const Input input2 = getInput(m_editor, m_id, 2);
 		if (!input0 || !input1 || !input2) return;
-		input0.node->generate(blob);
-		input1.node->generate(blob);
-		input2.node->generate(blob);
+		input0.node->generateOnce(blob);
+		input1.node->generateOnce(blob);
+		input2.node->generateOnce(blob);
 
 		
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = mix(";
@@ -402,9 +420,218 @@ struct MixNode : public ShaderEditor::Node {
 	}
 };
 
+struct CodeNode : public ShaderEditor::Node {
+	explicit CodeNode(ShaderEditor& editor)
+		: Node(NodeType::CODE, editor)
+		, m_inputs(editor.getAllocator())
+		, m_outputs(editor.getAllocator())
+		, m_code(editor.getAllocator())
+	{}
+
+	ShaderEditor::ValueType getOutputType(int index) const override { return m_outputs[index].type; }
+	ShaderEditor::ValueType getInputType(int index) const override { return m_inputs[index].type; }
+
+	void serialize(OutputMemoryStream& blob) override {
+		blob.writeString(m_code.c_str());
+		blob.write(m_inputs.size());
+		for (const Variable& var : m_inputs) {
+			blob.write(var.type);
+			blob.writeString(var.name.c_str());
+		}
+		blob.write(m_outputs.size());
+		for (const Variable& var : m_outputs) {
+			blob.write(var.type);
+			blob.writeString(var.name.c_str());
+		}
+	}
+
+	void deserialize(InputMemoryStream& blob) override {
+		m_code = blob.readString();
+		i32 size;
+		blob.read(size);
+		for (i32 i = 0; i < size; ++i) {
+			Variable& var = m_inputs.emplace(m_editor.getAllocator());
+			blob.read(var.type);
+			var.name = blob.readString();
+		}
+
+		blob.read(size);
+		for (i32 i = 0; i < size; ++i) {
+			Variable& var = m_outputs.emplace(m_editor.getAllocator());
+			blob.read(var.type);
+			var.name = blob.readString();
+		}
+	}
+
+	bool hasInputPins() const override { return !m_inputs.empty(); }
+	bool hasOutputPins() const override { return !m_outputs.empty(); }
+
+	bool edit(const char* label, ShaderEditor::ValueType* type) {
+		bool changed = false;
+		if (ImGui::BeginCombo(label, toString(*type))) {
+			if (ImGui::Selectable("bool")) { *type = ShaderEditor::ValueType::BOOL; changed = true; }
+			if (ImGui::Selectable("int")) { *type = ShaderEditor::ValueType::INT; changed = true; }
+			if (ImGui::Selectable("float")) { *type = ShaderEditor::ValueType::FLOAT; changed = true; }
+			if (ImGui::Selectable("vec2")) { *type = ShaderEditor::ValueType::VEC2; changed = true; }
+			if (ImGui::Selectable("vec3")) { *type = ShaderEditor::ValueType::VEC3; changed = true; }
+			if (ImGui::Selectable("vec4")) { *type = ShaderEditor::ValueType::VEC4; changed = true; }
+			ImGui::EndCombo();
+		}
+		return changed;
+	}
+
+	void fixLinks(u32 deleted_idx, bool is_input) {
+		const ShaderEditor::Link* to_del = nullptr;
+		if (is_input) {
+			for (ShaderEditor::Link& link : m_editor.m_links) {
+				if (toNodeId(link.to) == m_id) {
+					const u16 to_attr = toAttrIdx(link.to);
+					if (to_attr == deleted_idx) to_del = &link;
+					else if (to_attr > deleted_idx) {
+						link.to = m_id | (u32(to_attr - 1) << 16);
+					}
+				}
+			}
+		}
+		else {
+			for (ShaderEditor::Link& link : m_editor.m_links) {
+				if (toNodeId(link.from) == m_id) {
+					const u16 from_attr = toAttrIdx(link.from);
+					if (from_attr == deleted_idx) to_del = &link;
+					else if (from_attr > deleted_idx) {
+						link.from = m_id | (u32(from_attr - 1) << 16);
+					}
+				}
+			}
+		}
+		if (to_del) m_editor.m_links.erase(u32(to_del - m_editor.m_links.begin()));
+	}
+
+	bool onGUI() override {
+		bool changed = false;
+		ImGuiEx::NodeTitle("Code");
+
+		ImGui::BeginGroup();
+		for (const Variable& input : m_inputs) {
+			inputSlot();
+			ImGui::TextUnformatted(input.name.c_str());
+		}
+		ImGui::EndGroup();
+
+		ImGui::SameLine();
+		ImGui::BeginGroup();
+	
+		if (ImGui::Button(ICON_FA_PENCIL_ALT "Edit")) ImGui::OpenPopup("edit");
+
+		if (ImGuiEx::BeginResizablePopup("edit", ImVec2(300, 300))) {
+			auto edit_vars = [&](const char* label, Array<Variable>& vars, bool is_input){
+				if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::PushID(&vars);
+					
+					if (ImGui::BeginTable("tab", 3)) {
+			            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize);
+						ImGui::TableSetupColumn("Type");
+						ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+						ImGui::TableHeadersRow();
+
+						for (Variable& var : vars) {
+							ImGui::PushID(&var);
+							ImGui::TableNextColumn();
+							const u32 idx = u32(&var - vars.begin());
+							bool del = ImGui::Button(ICON_FA_TRASH);
+							ImGui::TableNextColumn();
+							ImGui::SetNextItemWidth(-1);
+							changed = edit("##type", &var.type) || changed;
+							ImGui::TableNextColumn();
+							char buf[128];
+							copyString(buf, var.name.c_str());
+							ImGui::SetNextItemWidth(-1);
+							if (ImGui::InputText("##name", buf, sizeof(buf))) {
+								var.name = buf;
+								changed = true;
+							}
+							ImGui::PopID();
+							if (del) {
+								changed = true;
+								fixLinks(idx, is_input);
+								vars.erase(idx);
+								break;
+							}
+						}
+
+						ImGui::EndTable();
+					}
+
+					if (ImGui::Button("Add")) {
+						vars.emplace(m_editor.getAllocator());
+						changed = true;
+					}
+					ImGui::PopID();
+				}
+			};
+
+			edit_vars("Inputs", m_inputs, true);
+			edit_vars("Outputs", m_outputs, false);
+
+			if (ImGui::CollapsingHeader("Code", ImGuiTreeNodeFlags_DefaultOpen)) {
+				char buf[4096];
+				copyString(buf, m_code.c_str());
+				if (ImGui::InputTextMultiline("##code", buf, sizeof(buf), ImVec2(-1, ImGui::GetContentRegionAvail().y))) {
+					m_code = buf;
+					changed = true;
+				}
+			}
+			ImGui::EndPopup();
+		}
+		ImGui::EndGroup();
+
+		ImGui::SameLine();
+		ImGui::BeginGroup();
+		for (const Variable& output : m_outputs) {
+			outputSlot();
+			ImGui::TextUnformatted(output.name.c_str());
+		}
+		ImGui::EndGroup();
+
+		return changed;
+	}
+
+	void generate(OutputMemoryStream& blob) override {
+		for (const Variable& input_var : m_inputs) {
+			const u32 idx = u32(&input_var - m_inputs.begin());
+			const Input input = getInput(m_editor, m_id, idx);
+			if (!input) continue;
+
+			input.node->generateOnce(blob);
+			blob << toString(input_var.type) << " " << input_var.name.c_str() << " = ";
+			input.printReference(blob);
+			blob << ";\n";
+		}
+
+		for (const Variable& var : m_outputs) {
+			blob << toString(var.type) << " " << var.name.c_str() << ";";
+		}
+
+		blob << m_code.c_str();
+	}
+	
+	void printReference(OutputMemoryStream& blob, int output_idx) const override {
+		blob << m_outputs[output_idx].name.c_str();
+	}
+
+	struct Variable {
+		Variable(IAllocator& allocator) : name(allocator) {}
+		String name;
+		ShaderEditor::ValueType type = ShaderEditor::ValueType::FLOAT;
+	};
+
+	Array<Variable> m_inputs;
+	Array<Variable> m_outputs;
+	String m_code;
+};
+
 template <NodeType Type>
 struct OperatorNode : public ShaderEditor::Node {
-
 	explicit OperatorNode(ShaderEditor& editor)
 		: Node(Type, editor)
 	{}
@@ -420,11 +647,11 @@ struct OperatorNode : public ShaderEditor::Node {
 		return getInputType(0);
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_editor, m_id, 0);
 		const Input input1 = getInput(m_editor, m_id, 1);
-		if (input0) input0.node->generate(blob);
-		if (input1) input1.node->generate(blob);
+		if (input0) input0.node->generateOnce(blob);
+		if (input1) input1.node->generateOnce(blob);
 	}
 
 	void printReference(OutputMemoryStream& blob, int attr_idx) const override
@@ -493,10 +720,10 @@ struct OneMinusNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return;
-		input.node->generate(blob);
+		input.node->generateOnce(blob);
 	}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
@@ -541,10 +768,10 @@ struct SwizzleNode : public ShaderEditor::Node {
 		}
 	}
 	
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return;
-		input.node->generate(blob);
+		input.node->generateOnce(blob);
 	}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
@@ -595,7 +822,7 @@ struct FresnelNode : public ShaderEditor::Node {
 		return false;
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		// TODO use data.normal instead of v_normal
 		blob << "float v" << m_id << " = mix(" << F0 << ", 1.0, pow(1 - saturate(dot(-normalize(v_wpos.xyz), v_normal)), " << power << "));\n";
 	}
@@ -651,10 +878,10 @@ struct FunctionCallNode : public ShaderEditor::Node
 		}
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_editor, m_id, 0);
 
-		if (input0) input0.node->generate(blob);
+		if (input0) input0.node->generateOnce(blob);
 
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = " << getName() << "(";
 		if (input0) {
@@ -711,11 +938,11 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 		}
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_editor, m_id, 0);
 		const Input input1 = getInput(m_editor, m_id, 1);
-		if (input0) input0.node->generate(blob);
-		if (input1) input1.node->generate(blob);
+		if (input0) input0.node->generateOnce(blob);
+		if (input1) input1.node->generateOnce(blob);
 
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = " << getName() << "(";
 		if (input0) {
@@ -839,10 +1066,10 @@ struct ConstNode : public ShaderEditor::Node
 		blob << m_value[idx];
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		for (u32 i = 0; i < 4; ++i) {
 			const Input input = getInput(m_editor, m_id, i);
-			if (input) input.node->generate(blob);
+			if (input) input.node->generateOnce(blob);
 		}
 	}
 
@@ -973,9 +1200,9 @@ struct SampleNode : public ShaderEditor::Node
 	void deserialize(InputMemoryStream& blob) override { m_texture = blob.readString(); }
 	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC4; }
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_editor, m_id, 0);
-		if (input0) input0.node->generate(blob);
+		if (input0) input0.node->generateOnce(blob);
 		blob << "\t\tvec4 v" << m_id << " = ";
 		char var_name[64];
 		Shader::toTextureVarName(Span(var_name), m_texture.c_str());
@@ -1060,11 +1287,11 @@ struct AppendNode : public ShaderEditor::Node {
 		}
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_editor, m_id, 0);
-		if (input0) input0.node->generate(blob);
+		if (input0) input0.node->generateOnce(blob);
 		const Input input1 = getInput(m_editor, m_id, 1);
-		if (input1) input1.node->generate(blob);
+		if (input1) input1.node->generateOnce(blob);
 	}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
@@ -1121,11 +1348,11 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 		return toString(input.node->getOutputType(input.output_idx));
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		blob << "#ifdef " << m_define.c_str() << "\n";
 		const Input input0 = getInput(m_editor, m_id, 0);
 		if (input0) {
-			input0.node->generate(blob);
+			input0.node->generateOnce(blob);
 			blob << getOutputTypeName() << " v" << m_id << " = ";
 			input0.printReference(blob);
 			blob << ";\n";
@@ -1133,7 +1360,7 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 		blob << "#else\n";
 		const Input input1 = getInput(m_editor, m_id, 1);
 		if (input1) {
-			input1.node->generate(blob);
+			input1.node->generateOnce(blob);
 			blob << getOutputTypeName() << " v" << m_id << " = "; 
 			input1.printReference(blob);
 			blob << ";\n";
@@ -1181,7 +1408,7 @@ struct ParameterNode : public ShaderEditor::Node {
 		return res;
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		switch(Type) {
 			case NodeType::SCALAR_PARAM: blob << "\tfloat v"; break;
 			case NodeType::VEC4_PARAM: blob << "\tvec4 v"; break;
@@ -1206,25 +1433,25 @@ struct PBRNode : public ShaderEditor::Node
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return false; }
 
-	static void generate(OutputMemoryStream& blob, const Node* node) {
+	static void generate(OutputMemoryStream& blob, Node* node) {
 		if (!node) return;
-		forEachInput(node->m_editor, node->m_id, [&](const ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
+		forEachInput(node->m_editor, node->m_id, [&](ShaderEditor::Node* from, u16 from_attr, u16 to_attr, u32 link_idx){
 			generate(blob, from);
 		});
-		node->generate(blob);
+		node->generateOnce(blob);
 	}
 
 	void generateVS(OutputMemoryStream& blob) const {
 		const Input input = getInput(m_editor, m_id, 0);
 		generate(blob, input.node);
 		if (!input) return;
-		input.node->generate(blob);
+		input.node->generateOnce(blob);
 		blob << "v_wpos = ";
 		input.printReference(blob);
 		blob << ";";
 	}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const struct {
 			const char* name;
 			const char* default_value;
@@ -1245,7 +1472,7 @@ struct PBRNode : public ShaderEditor::Node
 			const int i = int(&field - fields);
 			Input input = getInput(m_editor, m_id, i);
 			if (input) {
-				input.node->generate(blob);
+				input.node->generateOnce(blob);
 				blob << "\tdata." << field.name << " = ";
 				if (i < 2) blob << "vec3(";
 				input.printReference(blob);
@@ -1316,7 +1543,7 @@ struct IfNode : public ShaderEditor::Node
 	void serialize(OutputMemoryStream& blob) override {}
 	void deserialize(InputMemoryStream& blob) override {}
 
-	void generate(OutputMemoryStream& blob) const override {
+	void generate(OutputMemoryStream& blob) override {
 		const Input inputA = getInput(m_editor, m_id, 0);
 		const Input inputB = getInput(m_editor, m_id, 1);
 		const Input inputGT = getInput(m_editor, m_id, 2);
@@ -1689,7 +1916,11 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 		((PBRNode*)m_nodes[0])->generateVS(blob);
 	#endif	
 
-	m_nodes[0]->generate(blob);
+	for (Node* n : m_nodes) {
+		n->m_generated = false;
+	}
+
+	m_nodes[0]->generateOnce(blob);
 
 	blob << "]]\n})\n";
 
@@ -1801,6 +2032,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
 		case NodeType::ONEMINUS:					return LUMIX_NEW(m_allocator, OneMinusNode)(*this);
+		case NodeType::CODE:						return LUMIX_NEW(m_allocator, CodeNode)(*this);
 		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
 		case NodeType::FRESNEL:						return LUMIX_NEW(m_allocator, FresnelNode)(*this);
 		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
