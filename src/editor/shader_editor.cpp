@@ -412,8 +412,8 @@ struct OperatorNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override { blob.write(b_val); }
-	void load(InputMemoryStream& blob) override { blob.read(b_val); }
+	void serialize(OutputMemoryStream& blob) override { blob.write(b_val); }
+	void deserialize(InputMemoryStream& blob) override { blob.read(b_val); }
 
 	ShaderEditor::ValueType getOutputType(int) const override {
 		// TODO float * vec4 and others
@@ -493,6 +493,12 @@ struct OneMinusNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
+	void generate(OutputMemoryStream& blob) const override {
+		const Input input = getInput(m_editor, m_id, 0);
+		if (!input) return;
+		input.node->generate(blob);
+	}
+
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
 		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return;
@@ -521,8 +527,8 @@ struct SwizzleNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 	
-	void save(OutputMemoryStream& blob) override { blob.write(m_swizzle); }
-	void load(InputMemoryStream& blob) override { blob.read(m_swizzle); }
+	void serialize(OutputMemoryStream& blob) override { blob.write(m_swizzle); }
+	void deserialize(InputMemoryStream& blob) override { blob.read(m_swizzle); }
 	ShaderEditor::ValueType getOutputType(int idx) const override { 
 		// TODO other types, e.g. ivec4...
 		switch(stringLength(m_swizzle)) {
@@ -570,12 +576,12 @@ struct FresnelNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return false; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream&blob) override {
+	void serialize(OutputMemoryStream&blob) override {
 		blob.write(F0);
 		blob.write(power);
 	}
 
-	void load(InputMemoryStream&blob) override {
+	void deserialize(InputMemoryStream&blob) override {
 		blob.read(F0);
 		blob.read(power);
 	}
@@ -608,8 +614,8 @@ struct FunctionCallNode : public ShaderEditor::Node
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override {}
-	void load(InputMemoryStream& blob) override {}
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
 
 	ShaderEditor::ValueType getOutputType(int) const override { 
 		if (Type == NodeType::LENGTH) return ShaderEditor::ValueType::FLOAT;
@@ -680,8 +686,8 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override {}
-	void load(InputMemoryStream& blob) override {}
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
 
 	ShaderEditor::ValueType getOutputType(int) const override { 
 		switch (Type) {
@@ -751,8 +757,8 @@ struct VaryingNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return false; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream&) override {}
-	void load(InputMemoryStream&) override {}
+	void serialize(OutputMemoryStream&) override {}
+	void deserialize(InputMemoryStream&) override {}
 
 	ShaderEditor::ValueType getOutputType(int) const override { 
 		switch(Type) {
@@ -806,7 +812,7 @@ struct ConstNode : public ShaderEditor::Node
 		}
 	}
 
-	void save(OutputMemoryStream& blob) override
+	void serialize(OutputMemoryStream& blob) override
 	{
 		blob.write(m_value);
 		blob.write(m_is_color);
@@ -814,7 +820,7 @@ struct ConstNode : public ShaderEditor::Node
 		blob.write(m_int_value);
 	}
 
-	void load(InputMemoryStream& blob) override 
+	void deserialize(InputMemoryStream& blob) override 
 	{
 		blob.read(m_value);
 		blob.read(m_is_color);
@@ -963,8 +969,8 @@ struct SampleNode : public ShaderEditor::Node
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override { blob.writeString(m_texture.c_str()); }
-	void load(InputMemoryStream& blob) override { m_texture = blob.readString(); }
+	void serialize(OutputMemoryStream& blob) override { blob.writeString(m_texture.c_str()); }
+	void deserialize(InputMemoryStream& blob) override { m_texture = blob.readString(); }
 	ShaderEditor::ValueType getOutputType(int) const override { return ShaderEditor::ValueType::VEC4; }
 
 	void generate(OutputMemoryStream& blob) const override {
@@ -1106,8 +1112,8 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 		return res;
 	}
 
-	void save(OutputMemoryStream& blob) override { blob.write(m_is_on); }
-	void load(InputMemoryStream& blob) override { blob.read(m_is_on); }
+	void serialize(OutputMemoryStream& blob) override { blob.write(m_is_on); }
+	void deserialize(InputMemoryStream& blob) override { blob.read(m_is_on); }
 	
 	const char* getOutputTypeName() const {
 		const Input input = getInput(m_editor, m_id, m_is_on ? 0 : 1);
@@ -1155,8 +1161,8 @@ struct ParameterNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return false; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) { blob.writeString(m_name.c_str()); }
-	void load(InputMemoryStream& blob) { m_name = blob.readString(); }
+	void serialize(OutputMemoryStream& blob) override { blob.writeString(m_name.c_str()); }
+	void deserialize(InputMemoryStream& blob) override { m_name = blob.readString(); }
 
 	bool onGUI() override {
 		const ImU32 color = ImGui::GetColorU32(ImGuiCol_PlotLinesHovered);
@@ -1307,8 +1313,8 @@ struct IfNode : public ShaderEditor::Node
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override {}
-	void load(InputMemoryStream& blob) override {}
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
 
 	void generate(OutputMemoryStream& blob) const override {
 		const Input inputA = getInput(m_editor, m_id, 0);
@@ -1391,8 +1397,8 @@ struct VertexIDNode : ShaderEditor::Node
 	bool hasInputPins() const override { return false; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override {}
-	void load(InputMemoryStream& blob) override {}
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
 		blob << "gl_VertexID";
@@ -1420,8 +1426,8 @@ struct UniformNode : ShaderEditor::Node
 	bool hasInputPins() const override { return false; }
 	bool hasOutputPins() const override { return true; }
 
-	void save(OutputMemoryStream& blob) override {}
-	void load(InputMemoryStream& blob) override {}
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override
 	{
@@ -1503,6 +1509,10 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_recent_paths(app.getAllocator())
 {
 	newGraph();
+	m_save_action.init(ICON_FA_SAVE "Save", "Shader editor save", "shader_editor_save", ICON_FA_SAVE, os::Keycode::S, Action::Modifiers::CTRL, true);
+	m_save_action.func.bind<&ShaderEditor::save>(this);
+	m_save_action.plugin = this;
+
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
 	m_undo_action.func.bind<&ShaderEditor::undo>(this);
 	m_undo_action.plugin = this;
@@ -1520,6 +1530,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_toggle_ui.is_selected.bind<&ShaderEditor::isOpen>(this);
 
 	m_app.addWindowAction(&m_toggle_ui);
+	m_app.addAction(&m_save_action);
 	m_app.addAction(&m_undo_action);
 	m_app.addAction(&m_redo_action);
 	m_app.addAction(&m_delete_action);
@@ -1551,6 +1562,7 @@ void ShaderEditor::onToggle() {
 ShaderEditor::~ShaderEditor()
 {
 	m_app.removeAction(&m_toggle_ui);
+	m_app.removeAction(&m_save_action);
 	m_app.removeAction(&m_undo_action);
 	m_app.removeAction(&m_redo_action);
 	m_app.removeAction(&m_delete_action);
@@ -1704,17 +1716,17 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 }
 
 
-void ShaderEditor::saveNode(OutputMemoryStream& blob, Node& node)
+void ShaderEditor::serializeNode(OutputMemoryStream& blob, Node& node)
 {
 	int type = (int)node.m_type;
 	blob.write(node.m_id);
 	blob.write(type);
 	blob.write(node.m_pos);
 
-	node.save(blob);
+	node.serialize(blob);
 }
 
-void ShaderEditor::save(const char* path) {
+void ShaderEditor::saveAs(const char* path) {
 	os::OutputFile file;
 	if(!file.open(path)) {
 		logError("Could not save shader ", path);
@@ -1722,7 +1734,7 @@ void ShaderEditor::save(const char* path) {
 	}
 
 	OutputMemoryStream blob(m_allocator);
-	save(blob);
+	serialize(blob);
 
 	bool success = file.write(blob.data(), blob.size());
 	file.close();
@@ -1733,7 +1745,7 @@ void ShaderEditor::save(const char* path) {
 	pushRecent(path);
 }
 
-void ShaderEditor::save(OutputMemoryStream& blob) {
+void ShaderEditor::serialize(OutputMemoryStream& blob) {
 	blob.reserve(4096);
 	blob.write(u32('_LSE'));
 	blob.write(Version::LAST);
@@ -1742,7 +1754,7 @@ void ShaderEditor::save(OutputMemoryStream& blob) {
 	const i32 nodes_count = m_nodes.size();
 	blob.write(nodes_count);
 	for(auto* node : m_nodes) {
-		saveNode(blob, *node);
+		serializeNode(blob, *node);
 	}
 
 	const i32 links_count = m_links.size();
@@ -1833,7 +1845,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 	return nullptr;
 }
 
-ShaderEditor::Node& ShaderEditor::loadNode(InputMemoryStream& blob) {
+ShaderEditor::Node& ShaderEditor::deserializeNode(InputMemoryStream& blob) {
 	int type;
 	u16 id;
 	blob.read(id);
@@ -1843,7 +1855,7 @@ ShaderEditor::Node& ShaderEditor::loadNode(InputMemoryStream& blob) {
 	m_nodes.push(node);
 	blob.read(node->m_pos);
 
-	node->load(blob);
+	node->deserialize(blob);
 	return *node;
 }
 
@@ -1901,7 +1913,7 @@ bool ShaderEditor::load(InputMemoryStream& blob) {
 	int size;
 	blob.read(size);
 	for(int i = 0; i < size; ++i) {
-		loadNode(blob);
+		deserializeNode(blob);
 	}
 
 	blob.read(size);
@@ -2120,7 +2132,7 @@ void ShaderEditor::saveUndo(u16 id) {
 
 	Undo u(m_allocator);
 	u.id = id;
-	save(u.blob);
+	serialize(u.blob);
 	if (id == 0xffFF || m_undo_stack.back().id != id) {
 		m_undo_stack.push(static_cast<Undo&&>(u));
 		++m_undo_stack_idx;
@@ -2185,6 +2197,15 @@ void ShaderEditor::newGraph() {
 	saveUndo(0xffFF);
 }
 
+void ShaderEditor::save() {
+	if (m_path.isEmpty()) {
+		if(getSavePath() && !m_path.isEmpty()) saveAs(m_path.c_str());
+	}
+	else {
+		saveAs(m_path.c_str());
+	}
+}
+
 void ShaderEditor::onGUIMenu()
 {
 	if(ImGui::BeginMenuBar()) {
@@ -2192,16 +2213,9 @@ void ShaderEditor::onGUIMenu()
 			if (ImGui::MenuItem("New")) newGraph();
 			ImGui::MenuItem("View source", nullptr, &m_source_open);
 			if (ImGui::MenuItem("Open")) load();
-			if (ImGui::MenuItem("Save")) {
-				if (m_path.isEmpty()) {
-					if(getSavePath() && !m_path.isEmpty()) save(m_path.c_str());
-				}
-				else {
-					save(m_path.c_str());
-				}
-			}
+			menuItem(m_save_action, true);
 			if (ImGui::MenuItem("Save as")) {
-				if(getSavePath() && !m_path.isEmpty()) save(m_path.c_str());
+				if(getSavePath() && !m_path.isEmpty()) saveAs(m_path.c_str());
 			}
 
 			if (ImGui::BeginMenu("Recent", !m_recent_paths.empty())) {

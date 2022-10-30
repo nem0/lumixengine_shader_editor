@@ -47,8 +47,8 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		Node(NodeType type, ShaderEditor& editor);
 		virtual ~Node() {}
 
-		virtual void save(OutputMemoryStream&blob) {}
-		virtual void load(InputMemoryStream&blob) {}
+		virtual void serialize(OutputMemoryStream&blob) {}
+		virtual void deserialize(InputMemoryStream&blob) {}
 		virtual void generate(OutputMemoryStream&blob) const {}
 		virtual void printReference(OutputMemoryStream& blob, int output_idx) const;
 		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
@@ -81,8 +81,8 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 	void onWindowGUI();
 	IAllocator& getAllocator() { return m_allocator; }
 	Node* createNode(int type);
-	Node& loadNode(InputMemoryStream& blob);
-	void saveNode(OutputMemoryStream& blob, Node& node);
+	Node& deserializeNode(InputMemoryStream& blob);
+	void serializeNode(OutputMemoryStream& blob, Node& node);
 	bool hasFocus() override { return m_is_focused; }
 	void undo();
 	void redo();
@@ -103,8 +103,9 @@ private:
 	void destroyNode(Node * node);
 	void generate(const char* path, bool save_file);
 	void newGraph();
-	void save(OutputMemoryStream& blob);
-	void save(const char* path);
+	void serialize(OutputMemoryStream& blob);
+	void saveAs(const char* path);
+	void save();
 	bool load(InputMemoryStream& blob);
 	void load();
 	void load(const char* path);
@@ -135,6 +136,7 @@ private:
 	Array<Undo> m_undo_stack;
 	bool m_is_focused;
 	String m_source;
+	Action m_save_action;
 	Action m_undo_action;
 	Action m_redo_action;
 	Action m_toggle_ui;
