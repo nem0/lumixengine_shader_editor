@@ -97,7 +97,8 @@ enum class NodeType {
 	VIEW_DIR,
 	PIXEL_DEPTH,
 	SCREEN_POSITION,
-	SCENE_DEPTH
+	SCENE_DEPTH,
+	ONEMINUS,
 };
 
 struct VertexOutput {
@@ -188,6 +189,7 @@ static const struct NodeTypeDesc {
 	{nullptr, "Mix", NodeType::MIX},
 	{nullptr, "If", NodeType::IF},
 	{nullptr, "Static switch", NodeType::STATIC_SWITCH},
+	{nullptr, "One minus", NodeType::ONEMINUS},
 	{nullptr, "Append", NodeType::APPEND},
 	{nullptr, "Fresnel", NodeType::FRESNEL},
 	{nullptr, "Scalar parameter", NodeType::SCALAR_PARAM},
@@ -367,9 +369,7 @@ struct MixNode : public ShaderEditor::Node {
 	bool hasOutputPins() const override { return true; }
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted("Mix");
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle("Mix");
 
 		ImGui::BeginGroup();
 		inputSlot(); ImGui::TextUnformatted("A");
@@ -466,9 +466,7 @@ struct OperatorNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted(getName());
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle(getName());
 
 		outputSlot();
 		inputSlot(); ImGui::Text("A");
@@ -487,8 +485,33 @@ struct OperatorNode : public ShaderEditor::Node {
 	float b_val = 2;
 };
 
-struct SwizzleNode : public ShaderEditor::Node
-{
+struct OneMinusNode : public ShaderEditor::Node {
+	explicit OneMinusNode(ShaderEditor& editor)
+		: Node(NodeType::ONEMINUS, editor)
+	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+
+	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
+		const Input input = getInput(m_editor, m_id, 0);
+		if (!input) return;
+		
+		blob << "(1 - ";
+		input.printReference(blob);
+		blob << ")";
+	}
+
+	bool onGUI() override {
+		inputSlot();
+		ImGui::TextUnformatted("1 - X");
+		ImGui::SameLine();
+		outputSlot();
+		return false;
+	}
+};
+
+struct SwizzleNode : public ShaderEditor::Node {
 	explicit SwizzleNode(ShaderEditor& editor)
 		: Node(NodeType::SWIZZLE, editor)
 	{
@@ -528,6 +551,7 @@ struct SwizzleNode : public ShaderEditor::Node
 
 	bool onGUI() override {
 		inputSlot();
+		ImGui::SetNextItemWidth(50);
 		bool res = ImGui::InputTextWithHint("", "swizzle", m_swizzle.data, sizeof(m_swizzle.data));
 
 		ImGui::SameLine();
@@ -557,9 +581,7 @@ struct FresnelNode : public ShaderEditor::Node {
 	}
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted("Fresnel");
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle("Fresnel");
 
 		outputSlot();
 		ImGui::DragFloat("F0", &F0);
@@ -707,9 +729,7 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted(getName());
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle(getName());
 		ImGui::BeginGroup();
 		inputSlot(); ImGui::Text("A");
 		inputSlot(); ImGui::Text("B");
@@ -984,9 +1004,7 @@ struct AppendNode : public ShaderEditor::Node {
 	bool hasOutputPins() const override { return true; }
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted("Append");
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle("Append");
 
 		ImGui::BeginGroup();
 		inputSlot();
@@ -1069,9 +1087,7 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 	bool hasOutputPins() const override { return true; }
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::TextUnformatted("Static switch");
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle("Static switch");
 		
 		ImGui::BeginGroup();
 		inputSlot();
@@ -1143,14 +1159,13 @@ struct ParameterNode : public ShaderEditor::Node {
 	void load(InputMemoryStream& blob) { m_name = blob.readString(); }
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
+		const ImU32 color = ImGui::GetColorU32(ImGuiCol_PlotLinesHovered);
 		switch(Type) {
-			case NodeType::SCALAR_PARAM: ImGui::TextUnformatted("Scalar param"); break;
-			case NodeType::VEC4_PARAM: ImGui::TextUnformatted("Vec4 param"); break;
-			case NodeType::COLOR_PARAM: ImGui::TextUnformatted("Color param"); break;
-			default: ASSERT(false); ImGui::TextUnformatted("Error"); break;
+			case NodeType::SCALAR_PARAM: ImGuiEx::NodeTitle("Scalar param", color); break;
+			case NodeType::VEC4_PARAM: ImGuiEx::NodeTitle("Vec4 param", color); break;
+			case NodeType::COLOR_PARAM: ImGuiEx::NodeTitle("Color param", color); break;
+			default: ASSERT(false); ImGuiEx::NodeTitle("Error"); break;
 		}
-		ImGuiEx::EndNodeTitleBar();
 		
 		outputSlot();
 		char tmp[128];
@@ -1249,9 +1264,7 @@ struct PBRNode : public ShaderEditor::Node
 	}
 
 	bool onGUI() override {
-		ImGuiEx::BeginNodeTitleBar();
-		ImGui::Text("PBR");
-		ImGuiEx::EndNodeTitleBar();
+		ImGuiEx::NodeTitle("PBR");
 		
 		inputSlot();
 		ImGui::TextUnformatted("Albedo");
@@ -1775,6 +1788,7 @@ ShaderEditor::Node* ShaderEditor::createNode(int type) {
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this);
+		case NodeType::ONEMINUS:					return LUMIX_NEW(m_allocator, OneMinusNode)(*this);
 		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
 		case NodeType::FRESNEL:						return LUMIX_NEW(m_allocator, FresnelNode)(*this);
 		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
