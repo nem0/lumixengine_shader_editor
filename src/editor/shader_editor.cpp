@@ -99,7 +99,8 @@ enum class NodeType {
 	SCREEN_POSITION,
 	SCENE_DEPTH,
 	ONEMINUS,
-	CODE
+	CODE,
+	PIN
 };
 
 struct VertexOutput {
@@ -180,60 +181,63 @@ static const struct NodeTypeDesc {
 	{nullptr, "Vector 3", NodeType::VEC3},
 	{nullptr, "Vector 2", NodeType::VEC2},
 	{nullptr, "Number", NodeType::NUMBER},
-	{nullptr, "Swizzle", NodeType::SWIZZLE},
-	{nullptr, "Time", NodeType::TIME},
-	{nullptr, "View direction", NodeType::VIEW_DIR},
-	{nullptr, "Pixel depth", NodeType::PIXEL_DEPTH},
-	{nullptr, "Scene depth", NodeType::SCENE_DEPTH},
-	{nullptr, "Screen position", NodeType::SCREEN_POSITION},
-	{nullptr, "Vertex ID", NodeType::VERTEX_ID},
-	{nullptr, "Mix", NodeType::MIX},
-	{nullptr, "If", NodeType::IF},
-	{nullptr, "Static switch", NodeType::STATIC_SWITCH},
-	{nullptr, "One minus", NodeType::ONEMINUS},
-	{nullptr, "Custom code", NodeType::CODE},
-	{nullptr, "Append", NodeType::APPEND},
-	{nullptr, "Fresnel", NodeType::FRESNEL},
-	{nullptr, "Scalar parameter", NodeType::SCALAR_PARAM},
-	{nullptr, "Color parameter", NodeType::COLOR_PARAM},
-	{nullptr, "Vec4 parameter", NodeType::VEC4_PARAM},
+	
+	{"Parameters", "Color", NodeType::COLOR_PARAM},
+	{"Parameters", "Scalar", NodeType::SCALAR_PARAM},
+	{"Parameters", "Vec4", NodeType::VEC4_PARAM},
+	
+	{"Constants", "Time", NodeType::TIME},
+	{"Constants", "Vertex ID", NodeType::VERTEX_ID},
+	{"Constants", "View direction", NodeType::VIEW_DIR},
 
-	{"Function", "Abs", NodeType::ABS},
-	{"Function", "All", NodeType::ALL},
-	{"Function", "Any", NodeType::ANY},
-	{"Function", "Ceil", NodeType::CEIL},
-	{"Function", "Cos", NodeType::COS},
-	{"Function", "Exp", NodeType::EXP},
-	{"Function", "Exp2", NodeType::EXP2},
-	{"Function", "Floor", NodeType::FLOOR},
-	{"Function", "Fract", NodeType::FRACT},
-	{"Function", "Log", NodeType::LOG},
-	{"Function", "Log2", NodeType::LOG2},
-	{"Function", "Normalize", NodeType::NORMALIZE},
-	{"Function", "Not", NodeType::NOT},
-	{"Function", "Round", NodeType::ROUND},
-	{"Function", "Saturate", NodeType::SATURATE},
-	{"Function", "Sin", NodeType::SIN},
-	{"Function", "Sqrt", NodeType::SQRT},
-	{"Function", "Tan", NodeType::TAN},
-	{"Function", "Transpose", NodeType::TRANSPOSE},
-	{"Function", "Trunc", NodeType::TRUNC},
+	{"Utility", "Fresnel", NodeType::FRESNEL},
+	{"Utility", "Custom code", NodeType::CODE},
+	{"Utility", "If", NodeType::IF},
+	{"Utility", "Pixel depth", NodeType::PIXEL_DEPTH},
+	{"Utility", "Scene depth", NodeType::SCENE_DEPTH},
+	{"Utility", "Screen position", NodeType::SCREEN_POSITION},
+	{"Utility", "Static switch", NodeType::STATIC_SWITCH},
+	{"Utility", "Swizzle", NodeType::SWIZZLE},
 
-	{"Function", "Cross", NodeType::CROSS},
-	{"Function", "Distance", NodeType::DISTANCE},
-	{"Function", "Dot", NodeType::DOT},
-	{"Function", "Length", NodeType::LENGTH},
-	{"Function", "Max", NodeType::MAX},
-	{"Function", "Min", NodeType::MIN},
-	{"Function", "Power", NodeType::POW},
+	{"Math", "Abs", NodeType::ABS},
+	{"Math", "All", NodeType::ALL},
+	{"Math", "Any", NodeType::ANY},
+	{"Math", "Ceil", NodeType::CEIL},
+	{"Math", "Cos", NodeType::COS},
+	{"Math", "Exp", NodeType::EXP},
+	{"Math", "Exp2", NodeType::EXP2},
+	{"Math", "Floor", NodeType::FLOOR},
+	{"Math", "Fract", NodeType::FRACT},
+	{"Math", "Log", NodeType::LOG},
+	{"Math", "Log2", NodeType::LOG2},
+	{"Math", "Normalize", NodeType::NORMALIZE},
+	{"Math", "Not", NodeType::NOT},
+	{"Math", "Round", NodeType::ROUND},
+	{"Math", "Saturate", NodeType::SATURATE},
+	{"Math", "Sin", NodeType::SIN},
+	{"Math", "Sqrt", NodeType::SQRT},
+	{"Math", "Tan", NodeType::TAN},
+	{"Math", "Transpose", NodeType::TRANSPOSE},
+	{"Math", "Trunc", NodeType::TRUNC},
 
-	{"Math", "Multiply", NodeType::MULTIPLY},
+	{"Math", "Cross", NodeType::CROSS},
+	{"Math", "Distance", NodeType::DISTANCE},
+	{"Math", "Dot", NodeType::DOT},
+	{"Math", "Length", NodeType::LENGTH},
+	{"Math", "Max", NodeType::MAX},
+	{"Math", "Min", NodeType::MIN},
+	{"Math", "Power", NodeType::POW},
+
 	{"Math", "Add", NodeType::ADD},
-	{"Math", "Subtract", NodeType::SUBTRACT},
+	{"Math", "Append", NodeType::APPEND},
 	{"Math", "Divide", NodeType::DIVIDE},
+	{"Math", "Mix", NodeType::MIX},
+	{"Math", "Multiply", NodeType::MULTIPLY},
+	{"Math", "One minus", NodeType::ONEMINUS},
+	{"Math", "Subtract", NodeType::SUBTRACT},
 
-	{"Vertex", "Position", NodeType::POSITION},
 	{"Vertex", "Normal", NodeType::NORMAL},
+	{"Vertex", "Position", NodeType::POSITION},
 	{"Vertex", "UV0", NodeType::UV0}
 };
 
@@ -1042,7 +1046,6 @@ struct ConstNode : public ShaderEditor::Node
 	void serialize(OutputMemoryStream& blob) override
 	{
 		blob.write(m_value);
-		blob.write(m_is_color);
 		blob.write(m_type);
 		blob.write(m_int_value);
 	}
@@ -1050,7 +1053,6 @@ struct ConstNode : public ShaderEditor::Node
 	void deserialize(InputMemoryStream& blob) override 
 	{
 		blob.read(m_value);
-		blob.read(m_is_color);
 		blob.read(m_type);
 		blob.read(m_int_value);
 	}
@@ -1141,11 +1143,10 @@ struct ConstNode : public ShaderEditor::Node
 				}
 				switch (m_type) {
 					case ShaderEditor::ValueType::VEC4:
+						res = ImGui::ColorEdit4("##col", m_value, ImGuiColorEditFlags_NoInputs) || res; 
+						break;
 					case ShaderEditor::ValueType::VEC3:
-						ImGui::Checkbox("Color", &m_is_color);
-						if (m_is_color) {
-							res = ImGui::ColorPicker4("##col", m_value) || res; 
-						}
+						res = ImGui::ColorEdit3("##col", m_value, ImGuiColorEditFlags_NoInputs) || res; 
 						break;
 				}
 				break;
@@ -1180,7 +1181,6 @@ struct ConstNode : public ShaderEditor::Node
 	bool hasOutputPins() const override { return true; }
 
 	ShaderEditor::ValueType m_type;
-	bool m_is_color = false;
 	float m_value[4];
 	int m_int_value;
 };
@@ -1339,11 +1339,11 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 		return res;
 	}
 
-	void serialize(OutputMemoryStream& blob) override { blob.write(m_is_on); }
-	void deserialize(InputMemoryStream& blob) override { blob.read(m_is_on); }
+	void serialize(OutputMemoryStream& blob) override { blob.writeString(m_define.c_str()); }
+	void deserialize(InputMemoryStream& blob) override { m_define = blob.readString(); }
 	
 	const char* getOutputTypeName() const {
-		const Input input = getInput(m_editor, m_id, m_is_on ? 0 : 1);
+		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return "float";
 		return toString(input.node->getOutputType(input.output_idx));
 	}
@@ -1369,12 +1369,11 @@ struct StaticSwitchNode : public ShaderEditor::Node {
 	}
 	
 	ShaderEditor::ValueType getOutputType(int) const override {
-		const Input input = getInput(m_editor, m_id, m_is_on ? 0 : 1);
+		const Input input = getInput(m_editor, m_id, 0);
 		if (input) return input.node->getOutputType(input.output_idx);
 		return ShaderEditor::ValueType::FLOAT;
 	}
 
-	bool m_is_on = true;
 	String m_define;
 };
 
@@ -1422,6 +1421,33 @@ struct ParameterNode : public ShaderEditor::Node {
 	}
 
 	String m_name;
+};
+
+struct PinNode : public ShaderEditor::Node {
+	explicit PinNode(ShaderEditor& editor)
+		: Node(NodeType::PIN, editor)
+	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+	
+	void generate(OutputMemoryStream& blob) override {
+		const Input input = getInput(m_editor, m_id, 0);
+		if (input) input.node->generateOnce(blob);
+	}
+
+	void printReference(OutputMemoryStream& blob, int output_idx) const override {
+		const Input input = getInput(m_editor, m_id, 0);
+		if (input) input.printReference(blob);
+	}
+
+	bool onGUI() override { 
+		inputSlot();
+		ImGui::TextUnformatted(" ");
+		ImGui::SameLine();
+		outputSlot();
+		return false;
+	}
 };
 
 struct PBRNode : public ShaderEditor::Node
@@ -2013,6 +2039,7 @@ void ShaderEditor::clear()
 ShaderEditor::Node* ShaderEditor::createNode(int type) {
 	switch ((NodeType)type) {
 		case NodeType::PBR:							return LUMIX_NEW(m_allocator, PBRNode)(*this);
+		case NodeType::PIN:							return LUMIX_NEW(m_allocator, PinNode)(*this);
 		case NodeType::VEC4:						return LUMIX_NEW(m_allocator, ConstNode<ValueType::VEC4>)(*this);
 		case NodeType::VEC3:						return LUMIX_NEW(m_allocator, ConstNode<ValueType::VEC3>)(*this);
 		case NodeType::VEC2:						return LUMIX_NEW(m_allocator, ConstNode<ValueType::VEC2>)(*this);
@@ -2184,7 +2211,7 @@ static ImVec2 operator-(const ImVec2& a, const ImVec2& b)
 	return ImVec2(a.x - b.x, a.y - b.y);
 }
 
-void ShaderEditor::addNode(NodeType node_type, ImVec2 pos) {
+ShaderEditor::Node* ShaderEditor::addNode(NodeType node_type, ImVec2 pos, bool save_undo) {
 	Node* n = createNode((int)node_type);
 	n->m_id = ++m_last_node_id;
 	n->m_pos = pos;
@@ -2198,7 +2225,8 @@ void ShaderEditor::addNode(NodeType node_type, ImVec2 pos) {
 		}
 		m_half_link_start = 0;
 	}
-	saveUndo(0xffFF);
+	if (save_undo) saveUndo(0xffFF);
+	return n;
 }
 
 static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, ImVec2 pos) {
@@ -2210,7 +2238,7 @@ static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, Im
 	bool open = !group || ImGui::BeginMenu(group);
 	while (n != nodes.end() && n->group == nodes.begin()->group) {
 		if (open && ImGui::MenuItem(n->name)) {
-			editor.addNode(n->type, pos);
+			editor.addNode(n->type, pos, true);
 		}
 		++n;
 	}
@@ -2253,12 +2281,35 @@ void ShaderEditor::onGUICanvas()
 
 	bool open_context = false;
 
+	const ImVec2 mp = ImGui::GetMousePos() - origin - offset;
 	i32 hovered_link = -1;
 	for (i32 i = 0, c = m_links.size(); i < c; ++i) {
-		const Link& link = m_links[i];
+		Link& link = m_links[i];
 		ImGuiEx::NodeLinkEx(link.from | OUTPUT_FLAG, link.to, link.color, ImGui::GetColorU32(ImGuiCol_TabActive));
 		if (ImGuiEx::IsLinkHovered()) {
-			hovered_link = i;
+			if (ImGui::IsMouseClicked(0) && ImGui::GetIO().KeyCtrl) {
+				if (ImGuiEx::IsLinkStartHovered()) {
+					ImGuiEx::StartNewLink(link.to, true);
+				}
+				else {
+					ImGuiEx::StartNewLink(link.from | OUTPUT_FLAG, false);
+				}
+				m_links.erase(i);
+				--c;
+			}
+			if (ImGui::IsMouseDoubleClicked(0)) {
+				Node* n = addNode(NodeType::PIN, mp, false);
+				Link new_link;
+				new_link.color = link.color;
+				new_link.from = n->m_id | OUTPUT_FLAG; 
+				new_link.to = link.to;
+				link.to = n->m_id;
+				m_links.push(new_link);
+				saveUndo(0xffFF);
+			}
+			else {
+				hovered_link = i;
+			}
 		}
 	}
 
@@ -2282,7 +2333,6 @@ void ShaderEditor::onGUICanvas()
 
 	ImGuiEx::EndNodeEditor();
  
-	const ImVec2 mp = ImGui::GetMousePos() - origin - offset;
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
 		if (ImGui::GetIO().KeyAlt && hovered_link != -1) {
 			m_links.erase(hovered_link);
@@ -2311,7 +2361,7 @@ void ShaderEditor::onGUICanvas()
 			};
 			for (const auto& t : types) {
 				if (os::isKeyDown((os::Keycode)t.key)) {
-					addNode(t.type, mp);
+					addNode(t.type, mp, true);
 					break;
 				}
 			}
@@ -2336,7 +2386,7 @@ void ShaderEditor::onGUICanvas()
 			for (const auto& node_type : NODE_TYPES) {
 				if (stristr(node_type.name, filter)) {
 					if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(node_type.name)) {
-						addNode(node_type.type, m_context_pos);
+						addNode(node_type.type, m_context_pos, true);
 						filter[0] = '\0';
 						ImGui::CloseCurrentPopup();
 						break;

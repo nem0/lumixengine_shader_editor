@@ -89,7 +89,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 	void undo();
 	void redo();
 	void saveUndo(u16 id);
-	void addNode(NodeType node_type, ImVec2 pos);
+	Node* addNode(NodeType node_type, ImVec2 pos, bool save_undo);
 
 	static const int MAX_TEXTURES_COUNT = 16;
 	bool m_is_open;
