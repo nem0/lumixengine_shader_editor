@@ -1752,8 +1752,7 @@ void ShaderEditor::onBeforeSettingsSaved() {
 	Settings& settings = m_app.getSettings();
 	settings.setValue(Settings::GLOBAL, "is_shader_editor_open", m_is_open);
 	for (const String& p : m_recent_paths) {
-		const u32 i = u32(&p - m_recent_paths.begin());
-		const StaticString<32> key("shader_editor_recent_", i);
+		const u32 i = u32(&p - m_recent_paths.begin());		const StaticString<32> key("shader_editor_recent_", i);
 		settings.setValue(Settings::LOCAL, key, p.c_str());
 	}
 }
@@ -1775,6 +1774,11 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_save_action.func.bind<&ShaderEditor::save>(this);
 	m_save_action.plugin = this;
 
+	m_generate_action.init("Generate shader", "Shader editor generate", "shader_editor_generate", ICON_FA_CHECK, os::Keycode::E, Action::Modifiers::CTRL, true);
+	m_generate_action.func.bind<&ShaderEditor::generateAndSaveSource>(this);
+	m_generate_action.plugin = this;
+
+
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
 	m_undo_action.func.bind<&ShaderEditor::undo>(this);
 	m_undo_action.plugin = this;
@@ -1792,6 +1796,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_toggle_ui.is_selected.bind<&ShaderEditor::isOpen>(this);
 
 	m_app.addWindowAction(&m_toggle_ui);
+	m_app.addAction(&m_generate_action);
 	m_app.addAction(&m_save_action);
 	m_app.addAction(&m_undo_action);
 	m_app.addAction(&m_redo_action);
@@ -1824,6 +1829,7 @@ void ShaderEditor::onToggle() {
 ShaderEditor::~ShaderEditor()
 {
 	m_app.removeAction(&m_toggle_ui);
+	m_app.removeAction(&m_generate_action);
 	m_app.removeAction(&m_save_action);
 	m_app.removeAction(&m_undo_action);
 	m_app.removeAction(&m_redo_action);
@@ -1874,7 +1880,30 @@ void ShaderEditor::markReachableNodes() const {
 	markReachable(m_nodes[0]);
 }
 
-void ShaderEditor::generate(const char* sed_path, bool save_file)
+void ShaderEditor::saveSource() {
+	PathInfo fi(m_path.c_str());
+	StaticString<LUMIX_MAX_PATH> path(fi.m_dir, fi.m_basename, ".shd");
+	os::OutputFile file;
+	if (!file.open(path)) {
+		logError("Could not create file ", path);
+		return;
+	}
+
+	if (!file.write(m_source.c_str(), m_source.length())) {
+		file.close();
+		logError("Could not write ", path);
+		return;
+	}
+	file.close();
+}
+
+void ShaderEditor::generateAndSaveSource()
+{
+	generate();
+	saveSource();
+}
+
+void ShaderEditor::generate()
 {
 	markReachableNodes();
 	colorLinks();
@@ -1958,23 +1987,6 @@ void ShaderEditor::generate(const char* sed_path, bool save_file)
 	m_nodes[0]->generateOnce(blob);
 
 	blob << "]]\n})\n";
-
-	if (save_file) {
-		PathInfo fi(sed_path);
-		StaticString<LUMIX_MAX_PATH> path(fi.m_dir, fi.m_basename, ".shd");
-		os::OutputFile file;
-		if (!file.open(path)) {
-			logError("Could not create file ", path);
-			return;
-		}
-
-		if (!file.write(blob.data(), blob.size())) {
-			file.close();
-			logError("Could not write ", path);
-			return;
-		}
-		file.close();
-	}
 
 	m_source.resize((u32)blob.size());
 	memcpy(m_source.getData(), blob.data(), m_source.length());
@@ -2431,7 +2443,7 @@ void ShaderEditor::saveUndo(u16 id) {
 	else {
 		m_undo_stack.back() = static_cast<Undo&&>(u);
 	}
-	generate("", false);
+	generate();
 }
 
 bool ShaderEditor::canUndo() const { return m_undo_stack_idx > 0; }
@@ -2502,6 +2514,7 @@ void ShaderEditor::onGUIMenu()
 	if(ImGui::BeginMenuBar()) {
 		if(ImGui::BeginMenu("File")) {
 			if (ImGui::MenuItem("New")) newGraph();
+			menuItem(m_generate_action, !m_path.isEmpty());
 			ImGui::MenuItem("View source", nullptr, &m_source_open);
 			if (ImGui::MenuItem("Open")) load();
 			menuItem(m_save_action, true);
@@ -2522,9 +2535,6 @@ void ShaderEditor::onGUIMenu()
 			menuItem(m_redo_action, canRedo());
 			if (ImGui::MenuItem(ICON_FA_BRUSH "Clean")) deleteUnreachable();
 			ImGui::EndMenu();
-		}
-		if (ImGui::MenuItem("Generate & save", nullptr, false, !m_path.isEmpty())) {
-			generate(m_path.c_str(), true);
 		}
 
 		ImGui::EndMenuBar();

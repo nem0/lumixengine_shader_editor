@@ -103,7 +103,10 @@ private:
 	void onSettingsLoaded() override;
 	void onBeforeSettingsSaved() override;
 	void destroyNode(Node * node);
-	void generate(const char* path, bool save_file);
+	
+	void saveSource();
+	void generate();
+	void generateAndSaveSource();
 	void newGraph();
 	void serialize(OutputMemoryStream& blob);
 	void saveAs(const char* path);
@@ -143,6 +146,7 @@ private:
 	Action m_redo_action;
 	Action m_toggle_ui;
 	Action m_delete_action;
+	Action m_generate_action;
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
 	bool m_is_any_item_active = false;
