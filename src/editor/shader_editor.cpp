@@ -1578,8 +1578,13 @@ struct IfNode : public ShaderEditor::Node
 		if (!inputA || !inputB) return;
 		if (!inputGT && !inputEQ && !inputLT) return;
 		
+		inputA.node->generateOnce(blob);
+		inputB.node->generateOnce(blob);
+
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << ";\n";
 		if (inputGT) {
+			inputGT.node->generateOnce(blob);
+			
 			blob << "\t\tif(";
 			inputA.printReference(blob);
 			blob << " > ";
@@ -1591,6 +1596,8 @@ struct IfNode : public ShaderEditor::Node
 			blob << "\t\t}\n";
 		}
 		if (inputEQ) {
+			inputEQ.node->generateOnce(blob);
+
 			blob << "\t\tif(";
 			inputA.printReference(blob);
 			blob << " == ";
@@ -1602,6 +1609,8 @@ struct IfNode : public ShaderEditor::Node
 			blob << "\t\t}\n";
 		}
 		if (inputLT) {
+			inputLT.node->generateOnce(blob);
+
 			blob << "\t\tif(";
 			inputA.printReference(blob);
 			blob << " < ";
