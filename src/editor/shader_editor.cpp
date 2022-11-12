@@ -263,29 +263,6 @@ VERTEX_INPUTS[] = {
 };
 
 
-static constexpr char* FUNCTIONS[] = {
-	"abs",
-	"all",
-	"any",
-	"ceil",
-	"cos",
-	"exp",
-	"exp2",
-	"floor",
-	"fract",
-	"log",
-	"log2",
-	"normalize",
-	"not",
-	"round",
-	"saturate",
-	"sin",
-	"sqrt",
-	"tan",
-	"transpose",
-	"trunc"
-};
-
 static u16 toNodeId(int id) {
 	return u16(id);
 }
@@ -433,7 +410,6 @@ struct CodeNode : public ShaderEditor::Node {
 	{}
 
 	ShaderEditor::ValueType getOutputType(int index) const override { return m_outputs[index].type; }
-	ShaderEditor::ValueType getInputType(int index) const override { return m_inputs[index].type; }
 
 	void serialize(OutputMemoryStream& blob) override {
 		blob.writeString(m_code.c_str());
@@ -647,8 +623,17 @@ struct OperatorNode : public ShaderEditor::Node {
 	void deserialize(InputMemoryStream& blob) override { blob.read(b_val); }
 
 	ShaderEditor::ValueType getOutputType(int) const override {
-		// TODO float * vec4 and others
-		return getInputType(0);
+		const Input input0 = getInput(m_editor, m_id, 0);
+		const Input input1 = getInput(m_editor, m_id, 1);
+		if (input0) {
+			const ShaderEditor::ValueType type0 = input0.node->getOutputType(input0.output_idx);
+			if (input1) {
+				const ShaderEditor::ValueType type1 = input1.node->getOutputType(input1.output_idx);
+				return pickBiggerType(type0, type1);
+			}
+			return type0;
+		}
+		return ShaderEditor::ValueType::FLOAT;
 	}
 
 	void generate(OutputMemoryStream& blob) override {
@@ -724,6 +709,12 @@ struct OneMinusNode : public ShaderEditor::Node {
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 
+	ShaderEditor::ValueType getOutputType(int index) const override {
+		const Input input = getInput(m_editor, m_id, 0);
+		if (!input) return ShaderEditor::ValueType::FLOAT;
+		return input.node->getOutputType(input.output_idx);
+	}
+
 	void generate(OutputMemoryStream& blob) override {
 		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return;
@@ -734,7 +725,22 @@ struct OneMinusNode : public ShaderEditor::Node {
 		const Input input = getInput(m_editor, m_id, 0);
 		if (!input) return;
 		
-		blob << "(1 - ";
+		switch(input.node->getOutputType(input.output_idx)) {
+			default : blob << "(1 - "; break;
+			case ShaderEditor::ValueType::VEC4:
+				blob << "(vec4(1) - ";
+				break;
+			case ShaderEditor::ValueType::IVEC4:
+				blob << "(ivec4(1) - ";
+				break;
+			case ShaderEditor::ValueType::VEC2:
+				blob << "(vec2(1) - ";
+				break;
+			case ShaderEditor::ValueType::VEC3:
+				blob << "(vec3(1) - ";
+				break;
+		}
+
 		input.printReference(blob);
 		blob << ")";
 	}
@@ -906,6 +912,44 @@ struct FunctionCallNode : public ShaderEditor::Node
 	}
 };
 
+static u32 getChannelsCount(ShaderEditor::ValueType type) {
+	switch (type) {
+		case ShaderEditor::ValueType::BOOL:
+		case ShaderEditor::ValueType::INT:
+		case ShaderEditor::ValueType::FLOAT:
+			return 1;
+		case ShaderEditor::ValueType::VEC2:
+			return 2;
+		case ShaderEditor::ValueType::VEC3:
+			return 3;
+		case ShaderEditor::ValueType::IVEC4:
+		case ShaderEditor::ValueType::VEC4:
+			return 4;
+		default:
+			ASSERT(false);
+			return 0;
+	}
+}
+
+static ShaderEditor::ValueType pickBiggerType(ShaderEditor::ValueType t0, ShaderEditor::ValueType t1) {
+	if (getChannelsCount(t0) > getChannelsCount(t1)) return t0;
+	return t1;
+}
+
+static void makeSafeCast(OutputMemoryStream& blob, ShaderEditor::ValueType t0, ShaderEditor::ValueType t1) {
+	const u32 c0 = getChannelsCount(t0);
+	const u32 c1 = getChannelsCount(t1);
+	if (c0 == c1) return;
+	
+	if (c1 == 1) {
+		blob << ".";
+		for (u32 i = 0; i < c0; ++i) blob << "x";
+	}
+	else if (c0 == 1){
+		blob << ".x";
+	}
+}
+
 template <NodeType Type>
 struct BinaryFunctionCallNode : public ShaderEditor::Node
 {
@@ -953,14 +997,19 @@ struct BinaryFunctionCallNode : public ShaderEditor::Node
 			input0.printReference(blob);
 		}
 		else {
-			blob << "0";
+			blob << "1";
 		}
 		blob << ", ";
 		if (input1) {
 			input1.printReference(blob);
+			if (input0) {
+				makeSafeCast(blob
+					, input0.node->getOutputType(input0.output_idx)
+					, input1.node->getOutputType(input1.output_idx));
+			}
 		}
 		else {
-			blob << "0";
+			blob << "1";
 		}
 		blob << ");\n";
 	}

@@ -51,7 +51,6 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 		virtual void deserialize(InputMemoryStream&blob) {}
 		virtual void printReference(OutputMemoryStream& blob, int output_idx) const;
 		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
-		virtual ValueType getInputType(int index) const { return ValueType::FLOAT; }
 		virtual bool hasInputPins() const = 0;
 		virtual bool hasOutputPins() const = 0;
 
