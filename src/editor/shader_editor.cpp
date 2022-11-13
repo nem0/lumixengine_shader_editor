@@ -339,7 +339,7 @@ void ShaderEditorResource::Node::generateOnce(OutputMemoryStream& blob) {
 	generate(blob);
 }
 
-bool ShaderEditorResource::Node::onNodeGUI() {
+bool ShaderEditorResource::Node::nodeGUI() {
 	ImGuiEx::BeginNode(m_id, m_pos, &m_selected);
 	m_input_count = 0;
 	m_output_count = 0;
@@ -1808,7 +1808,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_is_focused(false)
 	, m_is_open(false)
 	, m_recent_paths(app.getAllocator())
-	, SimpleUndoRedo(app.getAllocator())
+	, NodeEditor(app.getAllocator())
 {
 	newGraph();
 	m_save_action.init(ICON_FA_SAVE "Save", "Shader editor save", "shader_editor_save", ICON_FA_SAVE, os::Keycode::S, Action::Modifiers::CTRL, true);
@@ -1847,7 +1847,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 void ShaderEditor::deleteSelectedNodes() {
 	if (m_is_any_item_active) return;
 	m_resource->deleteSelectedNodes();
-	saveUndo(NO_MERGE_UNDO);
+	pushUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::onToggle() { 
@@ -1866,7 +1866,7 @@ ShaderEditor::~ShaderEditor()
 }
 
 void ShaderEditorResource::deleteSelectedNodes() {
-	for (i32 i = m_nodes.size() - 1; i >= 0; --i) {
+	for (i32 i = m_nodes.size() - 1; i > 0; --i) { // we really don't want to delete node 0 (output)
 		Node* node = m_nodes[i];
 		if (node->m_selected) {
 			for (i32 j = m_links.size() - 1; j >= 0; --j) {
@@ -2085,6 +2085,9 @@ void ShaderEditorResource::serialize(OutputMemoryStream& blob) {
 		blob.write(l.from);
 		blob.write(l.to);
 	}
+
+	generate();
+	colorLinks();
 }
 
 void ShaderEditor::clear() {
@@ -2206,7 +2209,7 @@ void ShaderEditor::load(const char* path) {
 	m_resource->deserialize(blob);
 
 	clearUndoStack();
-	saveUndo(NO_MERGE_UNDO);
+	pushUndo(NO_MERGE_UNDO);
 	pushRecent(path);
 }
 
@@ -2281,7 +2284,7 @@ ShaderEditorResource::Node* ShaderEditor::addNode(NodeType node_type, ImVec2 pos
 		}
 		m_half_link_start = 0;
 	}
-	if (save_undo) saveUndo(NO_MERGE_UNDO);
+	if (save_undo) pushUndo(NO_MERGE_UNDO);
 	return n;
 }
 
@@ -2303,169 +2306,70 @@ static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, Im
 	nodeGroupUI(editor, Span(n, nodes.end()), pos);
 }
 
-void ShaderEditor::onGUICanvas()
-{
-	ImGui::BeginChild("canvas");
-
-	m_canvas.begin();
-
-	static ImVec2 offset = ImVec2(0, 0);
-	ImGuiEx::BeginNodeEditor("shader_editor", &offset);
-	const ImVec2 origin = ImGui::GetCursorScreenPos();
-
-	ImGuiID moved = 0;
-	u32 moved_count = 0;
-	for (Node*& node : m_resource->m_nodes) {
-		const bool reachable = node->m_reachable;
-		if (!reachable) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-		
-		const ImVec2 old_pos = node->m_pos;
-		if (node->onNodeGUI()) {
-			saveUndo(node->m_id);
-		}
-		if (old_pos.x != node->m_pos.x || old_pos.y != node->m_pos.y) {
-			moved = node->m_id;
-			++moved_count;
-		}
-		if (!reachable) ImGui::PopStyleVar();
-	}
-
-	if (moved_count > 0) {
-		if (moved_count > 1) saveUndo(0xffFE);
-		else saveUndo(moved);
-	}
-
-	bool open_context = false;
-
-	const ImVec2 mp = ImGui::GetMousePos() - origin - offset;
-	i32 hovered_link = -1;
-	for (i32 i = 0, c = m_resource->m_links.size(); i < c; ++i) {
-		Link& link = m_resource->m_links[i];
-		ImGuiEx::NodeLinkEx(link.from | OUTPUT_FLAG, link.to, link.color, ImGui::GetColorU32(ImGuiCol_TabActive));
-		if (ImGuiEx::IsLinkHovered()) {
-			if (ImGui::IsMouseClicked(0) && ImGui::GetIO().KeyCtrl) {
-				if (ImGuiEx::IsLinkStartHovered()) {
-					ImGuiEx::StartNewLink(link.to, true);
-				}
-				else {
-					ImGuiEx::StartNewLink(link.from | OUTPUT_FLAG, false);
-				}
-				m_resource->m_links.erase(i);
-				--c;
-			}
-			if (ImGui::IsMouseDoubleClicked(0)) {
-				Node* n = addNode(NodeType::PIN, mp, false);
-				Link new_link;
-				new_link.color = link.color;
-				new_link.from = n->m_id | OUTPUT_FLAG; 
-				new_link.to = link.to;
-				link.to = n->m_id;
-				m_resource->m_links.push(new_link);
-				saveUndo(NO_MERGE_UNDO);
-			}
-			else {
-				hovered_link = i;
-			}
+void ShaderEditor::onCanvasClicked(ImVec2 pos) {
+	static const struct {
+		char key;
+		NodeType type;
+	} types[] = {
+		{ 'A', NodeType::ADD },
+		{ 'C', NodeType::CROSS},
+		{ 'D', NodeType::DOT },
+		{ 'F', NodeType::FRACT },
+		{ 'I', NodeType::IF },
+		{ 'N', NodeType::NORMALIZE },
+		{ 'M', NodeType::MULTIPLY },
+		{ 'P', NodeType::SCALAR_PARAM },
+		{ 'S', NodeType::SATURATE },
+		{ 'T', NodeType::SAMPLE },
+		{ 'U', NodeType::UV0 },
+		{ '1', NodeType::NUMBER},
+		{ '2', NodeType::VEC2 },
+		{ '3', NodeType::VEC3 },
+		{ '4', NodeType::VEC4 },
+	};
+	for (const auto& t : types) {
+		if (os::isKeyDown((os::Keycode)t.key)) {
+			addNode(t.type, pos, true);
+			break;
 		}
 	}
+}
 
-	{
-		ImGuiID start_attr, end_attr;
-		if (ImGuiEx::GetHalfLink(&start_attr)) {
-			open_context = true;
-			m_context_pos = ImGui::GetMousePos() - offset;
-			m_half_link_start = start_attr;
-		}
+void ShaderEditor::onLinkDoubleClicked(ShaderEditor::Link& link, ImVec2 pos) {
+	ShaderEditorResource::Node* n = addNode(NodeType::PIN, pos, false);
+	ShaderEditorResource::Link new_link;
+	new_link.color = link.color;
+	new_link.from = n->m_id | OUTPUT_FLAG; 
+	new_link.to = link.to;
+	link.to = n->m_id;
+	getResource()->m_links.push(new_link);
+	pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
+}
 
-		if (ImGuiEx::GetNewLink(&start_attr, &end_attr)) {
-			ASSERT(start_attr & OUTPUT_FLAG);
-			m_resource->m_links.eraseItems([&](const Link& link) { return link.to == end_attr; });
-			m_resource->m_links.push({u32(start_attr) & ~OUTPUT_FLAG, u32(end_attr)});
-			
-			saveUndo(NO_MERGE_UNDO);
-			m_resource->colorLinks();
-		}
-	}
-
-	ImGuiEx::EndNodeEditor();
- 
-	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
-		if (ImGui::GetIO().KeyAlt && hovered_link != -1) {
-			m_resource->m_links.erase(hovered_link);
-			saveUndo(NO_MERGE_UNDO);
-		}
-		else {
-			static const struct {
-				char key;
-				NodeType type;
-			} types[] = {
-				{ 'A', NodeType::ADD },
-				{ 'C', NodeType::CROSS},
-				{ 'D', NodeType::DOT },
-				{ 'F', NodeType::FRACT },
-				{ 'I', NodeType::IF },
-				{ 'N', NodeType::NORMALIZE },
-				{ 'M', NodeType::MULTIPLY },
-				{ 'P', NodeType::SCALAR_PARAM },
-				{ 'S', NodeType::SATURATE },
-				{ 'T', NodeType::SAMPLE },
-				{ 'U', NodeType::UV0 },
-				{ '1', NodeType::NUMBER},
-				{ '2', NodeType::VEC2 },
-				{ '3', NodeType::VEC3 },
-				{ '4', NodeType::VEC4 },
-			};
-			for (const auto& t : types) {
-				if (os::isKeyDown((os::Keycode)t.key)) {
-					addNode(t.type, mp, true);
+void ShaderEditor::onContextMenu(bool recently_opened, ImVec2 pos) {
+	static char filter[64] = "";
+	ImGui::SetNextItemWidth(150);
+	if (recently_opened) ImGui::SetKeyboardFocusHere();
+	ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
+	if (filter[0]) {
+		for (const auto& node_type : NODE_TYPES) {
+			if (stristr(node_type.name, filter)) {
+				if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(node_type.name)) {
+					addNode(node_type.type, pos, true);
+					filter[0] = '\0';
+					ImGui::CloseCurrentPopup();
 					break;
 				}
 			}
 		}
 	}
-
-	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
-		open_context = true;
-		m_context_pos = ImGui::GetMousePos() - offset;
-		m_half_link_start = 0;
+	else {
+		nodeGroupUI(*this, Span(NODE_TYPES), pos);
 	}
-
-	if (open_context) ImGui::OpenPopup("context_menu");
-
-	if(ImGui::BeginPopup("context_menu")) {
-		static char filter[64] = "";
-		if (ImGui::MenuItem("Reset zoom")) m_canvas.m_scale = ImVec2(1, 1);
-		ImGui::SetNextItemWidth(150);
-		if (open_context) ImGui::SetKeyboardFocusHere();
-		ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
-		if (filter[0]) {
-			for (const auto& node_type : NODE_TYPES) {
-				if (stristr(node_type.name, filter)) {
-					if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(node_type.name)) {
-						addNode(node_type.type, m_context_pos, true);
-						filter[0] = '\0';
-						ImGui::CloseCurrentPopup();
-						break;
-					}
-				}
-			}
-		}
-		else {
-			nodeGroupUI(*this, Span(NODE_TYPES), m_context_pos);
-		}
-
-		ImGui::EndPopup();
-	}		
-
-	m_is_any_item_active = ImGui::IsAnyItemActive();
-
-	m_canvas.end();
-
-	ImGui::EndChild();
 }
 
-void ShaderEditor::saveUndo(u32 tag) {
-	pushUndo(tag);
+void ShaderEditor::pushUndo(u32 tag) {
+	SimpleUndoRedo::pushUndo(tag);
 	m_source = m_resource->generate();
 }
 
@@ -2513,7 +2417,7 @@ void ShaderEditor::newGraph() {
 	m_resource->m_nodes.back()->m_id = ++m_resource->m_last_node_id;
 
 	clearUndoStack();
-	saveUndo(NO_MERGE_UNDO);
+	pushUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::save() {
@@ -2577,7 +2481,7 @@ void ShaderEditorResource::deleteUnreachable() {
 
 void ShaderEditor::deleteUnreachable() {
 	m_resource->deleteUnreachable();
-	saveUndo(NO_MERGE_UNDO);
+	pushUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::onWindowGUI()
@@ -2607,7 +2511,9 @@ void ShaderEditor::onWindowGUI()
 		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		onGUIMenu();
-		onGUICanvas();
+		ImGui::BeginChild("canvas");
+		nodeEditorGUI(*m_resource);
+		ImGui::EndChild();
 	}
 	ImGui::End();
 }

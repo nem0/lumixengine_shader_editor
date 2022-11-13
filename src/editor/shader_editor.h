@@ -53,7 +53,7 @@ struct ShaderEditorResource {
 		virtual bool hasInputPins() const = 0;
 		virtual bool hasOutputPins() const = 0;
 
-		bool onNodeGUI();
+		bool nodeGUI();
 		void generateOnce(OutputMemoryStream& blob);
 
 		void inputSlot();
@@ -99,7 +99,7 @@ struct ShaderEditorResource {
 	int m_last_node_id = 0;
 };
 
-struct ShaderEditor : public StudioApp::GUIPlugin, SimpleUndoRedo {
+struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor<ShaderEditorResource, ShaderEditorResource::Node*, ShaderEditorResource::Link> {
 	using Node = ShaderEditorResource::Node;
 	using Link = ShaderEditorResource::Link;
 
@@ -109,8 +109,9 @@ struct ShaderEditor : public StudioApp::GUIPlugin, SimpleUndoRedo {
 	void onWindowGUI();
 	IAllocator& getAllocator() { return m_allocator; }
 	bool hasFocus() override { return m_is_focused; }
-	void saveUndo(u32 tag);
+	void pushUndo(u32 tag) override;
 	ShaderEditorResource::Node* addNode(NodeType node_type, ImVec2 pos, bool save_undo);
+	ShaderEditorResource* getResource() { return m_resource; }
 
 	static const int MAX_TEXTURES_COUNT = 16;
 	bool m_is_open;
@@ -133,9 +134,12 @@ private:
 	void deserialize(InputMemoryStream& blob) override;
 	void serialize(OutputMemoryStream& blob) override;
 
+	void onCanvasClicked(ImVec2 pos) override;
+	void onLinkDoubleClicked(Link& link, ImVec2 pos) override;
+	void onContextMenu(bool recently_opened, ImVec2 pos) override;
+
 	bool getSavePath();
 	void clear();
-	void onGUICanvas();
 	void onGUIMenu();
 	void onToggle();
 	void deleteSelectedNodes();
@@ -156,10 +160,7 @@ private:
 	Action m_generate_action;
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
-	bool m_is_any_item_active = false;
 	Array<String> m_recent_paths;
-	ImGuiID m_half_link_start = 0;
-	ImVec2 m_context_pos;
 
 	ShaderEditorResource* m_resource = nullptr;
 };
