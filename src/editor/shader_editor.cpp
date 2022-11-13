@@ -21,13 +21,6 @@
 namespace Lumix
 {
 
-struct ShaderEditor::Undo {
-	Undo(IAllocator& allocator) : blob(allocator) {}
-
-	OutputMemoryStream blob;
-	u16 id;
-};
-
 enum class Version {
 	FIRST,
 	LAST
@@ -1811,12 +1804,11 @@ void ShaderEditor::onBeforeSettingsSaved() {
 ShaderEditor::ShaderEditor(StudioApp& app)
 	: m_allocator(app.getAllocator())
 	, m_app(app)
-	, m_undo_stack(app.getAllocator())
 	, m_source(app.getAllocator())
-	, m_undo_stack_idx(-1)
 	, m_is_focused(false)
 	, m_is_open(false)
 	, m_recent_paths(app.getAllocator())
+	, SimpleUndoRedo(app.getAllocator())
 {
 	newGraph();
 	m_save_action.init(ICON_FA_SAVE "Save", "Shader editor save", "shader_editor_save", ICON_FA_SAVE, os::Keycode::S, Action::Modifiers::CTRL, true);
@@ -1829,11 +1821,11 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 
 
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
-	m_undo_action.func.bind<&ShaderEditor::undo>(this);
+	m_undo_action.func.bind<&ShaderEditor::undo>((SimpleUndoRedo*)this);
 	m_undo_action.plugin = this;
 
 	m_redo_action.init(ICON_FA_REDO "Redo", "Shader editor redo", "shader_editor_redo", ICON_FA_REDO, os::Keycode::Z, Action::Modifiers::CTRL | Action::Modifiers::SHIFT, true);
-	m_redo_action.func.bind<&ShaderEditor::redo>(this);
+	m_redo_action.func.bind<&ShaderEditor::redo>((SimpleUndoRedo*)this);
 	m_redo_action.plugin = this;
 
 	m_delete_action.init(ICON_FA_TRASH "Delete", "Shader editor delete", "shader_editor_delete", ICON_FA_TRASH, os::Keycode::DEL, Action::Modifiers::NONE, true);
@@ -1855,7 +1847,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 void ShaderEditor::deleteSelectedNodes() {
 	if (m_is_any_item_active) return;
 	m_resource->deleteSelectedNodes();
-	saveUndo(0xffFF);
+	saveUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::onToggle() { 
@@ -2098,9 +2090,7 @@ void ShaderEditorResource::serialize(OutputMemoryStream& blob) {
 void ShaderEditor::clear() {
 	LUMIX_DELETE(m_allocator, m_resource);
 	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_allocator);
-
-	m_undo_stack.clear();
-	m_undo_stack_idx = -1;
+	clearUndoStack();
 }
 
 ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
@@ -2215,9 +2205,8 @@ void ShaderEditor::load(const char* path) {
 	InputMemoryStream blob(&data[0], data_size);
 	m_resource->deserialize(blob);
 
-	m_undo_stack.clear();
-	m_undo_stack_idx = -1;
-	saveUndo(0xffFF);
+	clearUndoStack();
+	saveUndo(NO_MERGE_UNDO);
 	pushRecent(path);
 }
 
@@ -2292,7 +2281,7 @@ ShaderEditorResource::Node* ShaderEditor::addNode(NodeType node_type, ImVec2 pos
 		}
 		m_half_link_start = 0;
 	}
-	if (save_undo) saveUndo(0xffFF);
+	if (save_undo) saveUndo(NO_MERGE_UNDO);
 	return n;
 }
 
@@ -2372,7 +2361,7 @@ void ShaderEditor::onGUICanvas()
 				new_link.to = link.to;
 				link.to = n->m_id;
 				m_resource->m_links.push(new_link);
-				saveUndo(0xffFF);
+				saveUndo(NO_MERGE_UNDO);
 			}
 			else {
 				hovered_link = i;
@@ -2393,7 +2382,7 @@ void ShaderEditor::onGUICanvas()
 			m_resource->m_links.eraseItems([&](const Link& link) { return link.to == end_attr; });
 			m_resource->m_links.push({u32(start_attr) & ~OUTPUT_FLAG, u32(end_attr)});
 			
-			saveUndo(0xffFF);
+			saveUndo(NO_MERGE_UNDO);
 			m_resource->colorLinks();
 		}
 	}
@@ -2403,7 +2392,7 @@ void ShaderEditor::onGUICanvas()
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
 		if (ImGui::GetIO().KeyAlt && hovered_link != -1) {
 			m_resource->m_links.erase(hovered_link);
-			saveUndo(0xffFF);
+			saveUndo(NO_MERGE_UNDO);
 		}
 		else {
 			static const struct {
@@ -2475,48 +2464,19 @@ void ShaderEditor::onGUICanvas()
 	ImGui::EndChild();
 }
 
-
-void ShaderEditor::saveUndo(u16 id) {
-	while (m_undo_stack.size() > m_undo_stack_idx + 1) m_undo_stack.pop();
-
-	Undo u(m_allocator);
-	u.id = id;
-	m_resource->serialize(u.blob);
-	if (id == 0xffFF || m_undo_stack.back().id != id) {
-		m_undo_stack.push(static_cast<Undo&&>(u));
-		++m_undo_stack_idx;
-	}
-	else {
-		m_undo_stack.back() = static_cast<Undo&&>(u);
-	}
+void ShaderEditor::saveUndo(u32 tag) {
+	pushUndo(tag);
 	m_source = m_resource->generate();
 }
 
-bool ShaderEditor::canUndo() const { return m_undo_stack_idx > 0; }
-bool ShaderEditor::canRedo() const { return m_undo_stack_idx < m_undo_stack.size() - 1; }
-
-void ShaderEditor::undo() {
-	if (m_undo_stack_idx <= 0) return;
-	
-	for (auto* node : m_resource->m_nodes) {
-		LUMIX_DELETE(m_allocator, node);
-	}
-	m_resource->m_nodes.clear();
-
-	m_resource->deserialize(InputMemoryStream(m_undo_stack[m_undo_stack_idx - 1].blob));
-	--m_undo_stack_idx;
+void ShaderEditor::serialize(OutputMemoryStream& blob) {
+	m_resource->serialize(blob);
 }
 
-void ShaderEditor::redo() {
-	if (m_undo_stack_idx + 1 >= m_undo_stack.size()) return;
-	
-	for (auto* node : m_resource->m_nodes) {
-		LUMIX_DELETE(m_allocator, node);
-	}
-	m_resource->m_nodes.clear();
-
-	m_resource->deserialize(InputMemoryStream(m_undo_stack[m_undo_stack_idx + 1].blob));
-	++m_undo_stack_idx;
+void ShaderEditor::deserialize(InputMemoryStream& blob) {
+	LUMIX_DELETE(m_allocator, m_resource);
+	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_allocator);
+	m_resource->deserialize(blob);
 }
 
 void ShaderEditorResource::destroyNode(Node* node) {
@@ -2552,9 +2512,8 @@ void ShaderEditor::newGraph() {
 	m_resource->m_nodes.back()->m_pos.y = 50;
 	m_resource->m_nodes.back()->m_id = ++m_resource->m_last_node_id;
 
-	m_undo_stack.clear();
-	m_undo_stack_idx = -1;
-	saveUndo(0xffFF);
+	clearUndoStack();
+	saveUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::save() {
@@ -2618,7 +2577,7 @@ void ShaderEditorResource::deleteUnreachable() {
 
 void ShaderEditor::deleteUnreachable() {
 	m_resource->deleteUnreachable();
-	saveUndo(0xffFF);
+	saveUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::onWindowGUI()

@@ -99,7 +99,7 @@ struct ShaderEditorResource {
 	int m_last_node_id = 0;
 };
 
-struct ShaderEditor : public StudioApp::GUIPlugin {
+struct ShaderEditor : public StudioApp::GUIPlugin, SimpleUndoRedo {
 	using Node = ShaderEditorResource::Node;
 	using Link = ShaderEditorResource::Link;
 
@@ -109,9 +109,7 @@ struct ShaderEditor : public StudioApp::GUIPlugin {
 	void onWindowGUI();
 	IAllocator& getAllocator() { return m_allocator; }
 	bool hasFocus() override { return m_is_focused; }
-	void undo();
-	void redo();
-	void saveUndo(u16 id);
+	void saveUndo(u32 tag);
 	ShaderEditorResource::Node* addNode(NodeType node_type, ImVec2 pos, bool save_undo);
 
 	static const int MAX_TEXTURES_COUNT = 16;
@@ -131,8 +129,9 @@ private:
 	void save();
 	void load();
 	void load(const char* path);
-	bool canUndo() const;
-	bool canRedo() const;
+
+	void deserialize(InputMemoryStream& blob) override;
+	void serialize(OutputMemoryStream& blob) override;
 
 	bool getSavePath();
 	void clear();
@@ -143,14 +142,10 @@ private:
 	void deleteUnreachable();
 	void pushRecent(const char* path);
 
-	struct Undo;
-
 	StudioApp& m_app;
 	IAllocator& m_allocator;
 	ImVec2 m_canvas_offset = ImVec2(0, 0);
 	Path m_path;
-	int m_undo_stack_idx;
-	Array<Undo> m_undo_stack;
 	bool m_is_focused;
 	String m_source;
 	Action m_save_action;
