@@ -255,23 +255,14 @@ VERTEX_INPUTS[] = {
 	{ Mesh::AttributeSemantic::INSTANCE2,	"Instance data 2"	},
 };
 
-
-static u16 toNodeId(int id) {
-	return u16(id);
-}
-
-static u16 toAttrIdx(int id) {
-	return u16(u32(id) >> 16);
-}
-
 template <typename F>
 static void	forEachInput(const ShaderEditorResource& resource, int node_id, const F& f) {
 	for (const ShaderEditorResource::Link& link : resource.m_links) {
-		if (toNodeId(link.to) == node_id) {
-			const int iter = resource.m_nodes.find([&](const ShaderEditorResource::Node* node) { return node->m_id == toNodeId(link.from); }); 
+		if (link.getToNode() == node_id) {
+			const int iter = resource.m_nodes.find([&](const ShaderEditorResource::Node* node) { return node->m_id == link.getFromNode(); }); 
 			ShaderEditorResource::Node* from = resource.m_nodes[iter];
-			const u16 from_attr = toAttrIdx(link.from);
-			const u16 to_attr = toAttrIdx(link.to);
+			const u16 from_attr = link.getFromPin();
+			const u16 to_attr = link.getToPin();
 			f(from, from_attr, to_attr, u32(&link - resource.m_links.begin()));
 		}
 	}
@@ -298,8 +289,8 @@ static Input getInput(const ShaderEditorResource& resource, u16 node_id, u16 inp
 
 static bool isOutputConnected(const ShaderEditorResource& resource, u16 node_id, u16 input_idx) {
 	for (const ShaderEditorResource::Link& link : resource.m_links) {
-		if (toNodeId(link.from) == node_id) {
-			const u16 from_attr = toAttrIdx(link.from);
+		if (link.getFromNode() == node_id) {
+			const u16 from_attr = link.getFromPin();
 			if (from_attr == input_idx) return true;
 		}
 	}
@@ -458,8 +449,8 @@ struct CodeNode : public ShaderEditorResource::Node {
 		const ShaderEditorResource::Link* to_del = nullptr;
 		if (is_input) {
 			for (ShaderEditorResource::Link& link : m_resource.m_links) {
-				if (toNodeId(link.to) == m_id) {
-					const u16 to_attr = toAttrIdx(link.to);
+				if (link.getToNode() == m_id) {
+					const u16 to_attr = link.getToPin();
 					if (to_attr == deleted_idx) to_del = &link;
 					else if (to_attr > deleted_idx) {
 						link.to = m_id | (u32(to_attr - 1) << 16);
@@ -469,8 +460,8 @@ struct CodeNode : public ShaderEditorResource::Node {
 		}
 		else {
 			for (ShaderEditorResource::Link& link : m_resource.m_links) {
-				if (toNodeId(link.from) == m_id) {
-					const u16 from_attr = toAttrIdx(link.from);
+				if (link.getFromNode() == m_id) {
+					const u16 from_attr = link.getFromPin();
 					if (from_attr == deleted_idx) to_del = &link;
 					else if (from_attr > deleted_idx) {
 						link.from = m_id | (u32(from_attr - 1) << 16);
@@ -1870,7 +1861,7 @@ void ShaderEditorResource::deleteSelectedNodes() {
 		Node* node = m_nodes[i];
 		if (node->m_selected) {
 			for (i32 j = m_links.size() - 1; j >= 0; --j) {
-				if (toNodeId(m_links[j].from) == node->m_id || toNodeId(m_links[j].to) == node->m_id) {
+				if (m_links[j].getFromNode() == node->m_id || m_links[j].getToNode() == node->m_id) {
 					m_links.erase(j);
 				}
 			}
@@ -1891,9 +1882,9 @@ void ShaderEditorResource::markReachable(Node* node) const {
 
 void ShaderEditorResource::colorLinks(ImU32 color, u32 link_idx) {
 	m_links[link_idx].color = color;
-	const u32 from_node_id = toNodeId(m_links[link_idx].from);
+	const u32 from_node_id = m_links[link_idx].getFromNode();
 	for (u32 i = 0, c = m_links.size(); i < c; ++i) {
-		if (toNodeId(m_links[i].to) == from_node_id) colorLinks(color, i);
+		if (m_links[i].getToNode() == from_node_id) colorLinks(color, i);
 	}
 }
 
@@ -2385,7 +2376,7 @@ void ShaderEditor::deserialize(InputMemoryStream& blob) {
 
 void ShaderEditorResource::destroyNode(Node* node) {
 	for (i32 i = m_links.size() - 1; i >= 0; --i) {
-		if (toNodeId(m_links[i].from) == node->m_id || toNodeId(m_links[i].to) == node->m_id) {
+		if (m_links[i].getFromNode() == node->m_id || m_links[i].getToNode() == node->m_id) {
 			m_links.swapAndPop(i);
 		}
 	}
@@ -2468,7 +2459,7 @@ void ShaderEditorResource::deleteUnreachable() {
 		Node* node = m_nodes[i];
 		if (!node->m_reachable) {
 			for (i32 j = m_links.size() - 1; j >= 0; --j) {
-				if (toNodeId(m_links[j].from) == node->m_id || toNodeId(m_links[j].to) == node->m_id) {
+				if (m_links[j].getFromNode() == node->m_id || m_links[j].getToNode() == node->m_id) {
 					m_links.erase(j);
 				}
 			}

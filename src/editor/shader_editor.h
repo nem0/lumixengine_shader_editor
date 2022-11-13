@@ -24,6 +24,12 @@ struct ShaderEditorResource {
 		u32 from;
 		u32 to;
 		ImU32 color;
+
+		u16 getToNode() const { return to & 0xffFF; }
+		u16 getFromNode() const { return from & 0xffFF; }
+
+		u16 getToPin() const { return (to >> 16) & 0xffFF; }
+		u16 getFromPin() const { return (from >> 16) & 0xffFF; }
 	};
 
 	enum class ValueType : i32
