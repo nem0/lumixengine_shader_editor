@@ -140,7 +140,7 @@ private:
 	void deserialize(InputMemoryStream& blob) override;
 	void serialize(OutputMemoryStream& blob) override;
 
-	void onCanvasClicked(ImVec2 pos) override;
+	void onCanvasClicked(ImVec2 pos, i32 hovered_link) override;
 	void onLinkDoubleClicked(Link& link, ImVec2 pos) override;
 	void onContextMenu(bool recently_opened, ImVec2 pos) override;
 

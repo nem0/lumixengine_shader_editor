@@ -2297,7 +2297,7 @@ static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, Im
 	nodeGroupUI(editor, Span(n, nodes.end()), pos);
 }
 
-void ShaderEditor::onCanvasClicked(ImVec2 pos) {
+void ShaderEditor::onCanvasClicked(ImVec2 pos, i32 hovered_link) {
 	static const struct {
 		char key;
 		NodeType type;
@@ -2320,7 +2320,9 @@ void ShaderEditor::onCanvasClicked(ImVec2 pos) {
 	};
 	for (const auto& t : types) {
 		if (os::isKeyDown((os::Keycode)t.key)) {
-			addNode(t.type, pos, true);
+			addNode(t.type, pos, false);
+			if (hovered_link >= 0) splitLink(*m_resource, hovered_link, m_resource->m_nodes.size() - 1);
+			pushUndo(NO_MERGE_UNDO);
 			break;
 		}
 	}
