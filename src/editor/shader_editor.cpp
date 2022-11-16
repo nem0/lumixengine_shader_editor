@@ -310,8 +310,8 @@ void ShaderEditorResource::Node::printReference(OutputMemoryStream& blob, int ou
 ShaderEditorResource::Node::Node(NodeType type, ShaderEditorResource& resource)
 	: m_type(type)
 	, m_resource(resource)
-	, m_id(0xffFF)
 {
+	m_id = 0xffFF;
 }
 
 void ShaderEditorResource::Node::inputSlot() {
@@ -2321,7 +2321,7 @@ void ShaderEditor::onCanvasClicked(ImVec2 pos, i32 hovered_link) {
 	for (const auto& t : types) {
 		if (os::isKeyDown((os::Keycode)t.key)) {
 			addNode(t.type, pos, false);
-			if (hovered_link >= 0) splitLink(*m_resource, hovered_link, m_resource->m_nodes.size() - 1);
+			if (hovered_link >= 0) splitLink(m_resource->m_nodes.back(), m_resource->m_links, hovered_link);
 			pushUndo(NO_MERGE_UNDO);
 			break;
 		}
@@ -2505,7 +2505,7 @@ void ShaderEditor::onWindowGUI()
 
 		onGUIMenu();
 		ImGui::BeginChild("canvas");
-		nodeEditorGUI(*m_resource);
+		nodeEditorGUI(m_resource->m_nodes, m_resource->m_links);
 		ImGui::EndChild();
 	}
 	ImGui::End();

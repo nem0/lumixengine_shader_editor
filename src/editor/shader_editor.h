@@ -20,17 +20,7 @@ enum class NodeType;
 
 
 struct ShaderEditorResource {
-	struct Link {
-		u32 from;
-		u32 to;
-		ImU32 color;
-
-		u16 getToNode() const { return to & 0xffFF; }
-		u16 getFromNode() const { return from & 0xffFF; }
-
-		u16 getToPin() const { return (to >> 16) & 0xffFF; }
-		u16 getFromPin() const { return (from >> 16) & 0xffFF; }
-	};
+	using Link = NodeEditorLink;
 
 	enum class ValueType : i32
 	{
@@ -48,7 +38,7 @@ struct ShaderEditorResource {
 		NONE
 	};
 
-	struct Node {
+	struct Node : NodeEditorNode {
 		Node(NodeType type, ShaderEditorResource& resource);
 		virtual ~Node() {}
 
@@ -56,17 +46,13 @@ struct ShaderEditorResource {
 		virtual void deserialize(InputMemoryStream&blob) {}
 		virtual void printReference(OutputMemoryStream& blob, int output_idx) const;
 		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
-		virtual bool hasInputPins() const = 0;
-		virtual bool hasOutputPins() const = 0;
 
-		bool nodeGUI();
+		bool nodeGUI() override;
 		void generateOnce(OutputMemoryStream& blob);
 
 		void inputSlot();
 		void outputSlot();
 
-		u16 m_id;
-		ImVec2 m_pos;
 		bool m_selected = false;
 		bool m_reachable = false;
 		bool m_generated = false;
@@ -105,9 +91,9 @@ struct ShaderEditorResource {
 	int m_last_node_id = 0;
 };
 
-struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor<ShaderEditorResource, ShaderEditorResource::Node*, ShaderEditorResource::Link> {
+struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor {
 	using Node = ShaderEditorResource::Node;
-	using Link = ShaderEditorResource::Link;
+	using Link = NodeEditorLink;
 
 	explicit ShaderEditor(struct StudioApp& app);
 	~ShaderEditor();
