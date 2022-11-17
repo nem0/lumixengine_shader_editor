@@ -662,9 +662,10 @@ struct OperatorNode : public ShaderEditorResource::Node {
 			case NodeType::SUBTRACT: return "Subtract";
 			case NodeType::MULTIPLY: return "Multiply";
 			case NodeType::DIVIDE: return "Divide";
+			default: 
+				ASSERT(false);
+				return "Error";
 		}
-		ASSERT(false);
-		return "Error";
 	}
 
 	bool onGUI() override {
@@ -954,6 +955,7 @@ struct BinaryFunctionCallNode : public ShaderEditorResource::Node
 		switch (Type) {
 			case NodeType::DISTANCE:
 			case NodeType::DOT: return ShaderEditorResource::ValueType::FLOAT;
+			default: break;
 		}
 		const Input input0 = getInput(m_resource, m_id, 0);
 		if (input0) return input0.node->getOutputType(input0.output_idx);
@@ -1183,6 +1185,7 @@ struct ConstNode : public ShaderEditorResource::Node
 					case ShaderEditorResource::ValueType::VEC3:
 						res = ImGui::ColorEdit3("##col", m_value, ImGuiColorEditFlags_NoInputs) || res; 
 						break;
+					default: break;
 				}
 				break;
 			case ShaderEditorResource::ValueType::FLOAT:
@@ -1209,8 +1212,8 @@ struct ConstNode : public ShaderEditorResource::Node
 			case ShaderEditorResource::ValueType::VEC3:
 			case ShaderEditorResource::ValueType::VEC2:
 				return true;
+			default: return false;
 		}
-		return false;
 	}
 
 	bool hasOutputPins() const override { return true; }
@@ -1540,10 +1543,23 @@ struct PBRNode : public ShaderEditorResource::Node
 				const ShaderEditorResource::ValueType type = input.node->getOutputType(input.output_idx);
 				if (i == 0) {
 					switch(type) {
-						case ShaderEditorResource::ValueType::VEC4: blob << ".rgb"; break;
-						case ShaderEditorResource::ValueType::VEC3: break;
-						case ShaderEditorResource::ValueType::VEC2: blob << ".rgr"; break;
-						case ShaderEditorResource::ValueType::FLOAT: break;
+						case ShaderEditorResource::ValueType::IVEC4:
+						case ShaderEditorResource::ValueType::VEC4:
+							blob << ".rgb"; break;
+						case ShaderEditorResource::ValueType::VEC3:
+							break;
+						case ShaderEditorResource::ValueType::VEC2:
+							blob << ".rgr"; break;
+						case ShaderEditorResource::ValueType::BOOL:
+						case ShaderEditorResource::ValueType::INT:
+						case ShaderEditorResource::ValueType::FLOAT:
+							break;
+						case ShaderEditorResource::ValueType::COUNT:
+						case ShaderEditorResource::ValueType::NONE:
+						case ShaderEditorResource::ValueType::MATRIX3:
+						case ShaderEditorResource::ValueType::MATRIX4: 
+							// invalid data
+							break;
 					}
 				}
 				else if (type != ShaderEditorResource::ValueType::VEC3 && i < 2) blob << ".rgb";
@@ -1736,8 +1752,14 @@ struct UniformNode : ShaderEditorResource::Node
 		switch (Type) {
 			case NodeType::SCREEN_POSITION: return ShaderEditorResource::ValueType::VEC2;
 			case NodeType::VIEW_DIR: return ShaderEditorResource::ValueType::VEC3;
+			case NodeType::SCENE_DEPTH:
+			case NodeType::PIXEL_DEPTH:
+			case NodeType::TIME:
+				return ShaderEditorResource::ValueType::FLOAT;
+			default: 
+				ASSERT(false);
+				return ShaderEditorResource::ValueType::FLOAT;
 		}
-		return ShaderEditorResource::ValueType::FLOAT;
 	}
 
 	static const char* getVarName() {
@@ -1992,6 +2014,7 @@ String ShaderEditorResource::generate() {
 			case NodeType::STATIC_SWITCH:
 				add_define((StaticSwitchNode*)n);
 				break;
+			default: break;
 		}
 	}
 
@@ -1999,11 +2022,7 @@ String ShaderEditorResource::generate() {
 	blob << "texture_slots = {\n";
 	for (Node* n : m_nodes) {
 		if (!n->m_reachable) continue;
-		switch(n->m_type) {
-			case NodeType::SAMPLE:
-				add_texture((SampleNode*)n);
-				break;
-		}
+		if (n->m_type == NodeType::SAMPLE) add_texture((SampleNode*)n);
 	}
 	blob << "},\n";
 
