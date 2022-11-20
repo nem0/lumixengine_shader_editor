@@ -1875,7 +1875,7 @@ ShaderEditor::~ShaderEditor()
 	m_app.removeAction(&m_undo_action);
 	m_app.removeAction(&m_redo_action);
 	m_app.removeAction(&m_delete_action);
-	clear();
+	LUMIX_DELETE(m_allocator, m_resource);
 }
 
 void ShaderEditorResource::deleteSelectedNodes() {
