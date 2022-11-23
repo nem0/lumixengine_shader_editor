@@ -2060,21 +2060,17 @@ void ShaderEditorResource::serializeNode(OutputMemoryStream& blob, Node& node)
 
 void ShaderEditor::saveAs(const char* path) {
 	os::OutputFile file;
-	if(!file.open(path)) {
-		logError("Could not save shader ", path);
+	FileSystem& fs = m_app.getEngine().getFileSystem();
+	
+	OutputMemoryStream blob(m_allocator);
+	m_resource->serialize(blob);
+	if (!fs.saveContentSync(Path(path), blob)) {
+		logError("Could not save ", path);
 		return;
 	}
 
-	OutputMemoryStream blob(m_allocator);
-	m_resource->serialize(blob);
-
-	bool success = file.write(blob.data(), blob.size());
-	file.close();
-	if (!success) {
-		logError("Could not save shader ", path);
-	}
-
 	pushRecent(path);
+	m_path = path;
 }
 
 void ShaderEditorResource::serialize(OutputMemoryStream& blob) {
@@ -2188,34 +2184,19 @@ ShaderEditorResource::Node& ShaderEditorResource::deserializeNode(InputMemoryStr
 	return *node;
 }
 
-void ShaderEditor::load() {
-	char path[LUMIX_MAX_PATH];
-	if (!os::getOpenFilename(Span(path), "Shader edit data\0*.sed\0", nullptr)) return;
-	load(path);
-}
-
 void ShaderEditor::load(const char* path) {
 	m_path = path;
 
 	clear();
 
-	os::InputFile file;
-	if (!file.open(path)) {
-		logError("Failed to load shader ", path);
+	FileSystem& fs = m_app.getEngine().getFileSystem();
+	OutputMemoryStream data(m_allocator);
+	if (!fs.getContentSync(Path(path), data)) {
+		logError("Failed to load ", path);
 		return;
 	}
 
-	const u32 data_size = (u32)file.size();
-	Array<u8> data(m_allocator);
-	data.resize(data_size);
-	if (!file.read(&data[0], data_size)) {
-		logError("Failed to load shader ", path);
-		file.close();
-		return;
-	}
-	file.close();
-
-	InputMemoryStream blob(&data[0], data_size);
+	InputMemoryStream blob(data);
 	m_resource->deserialize(blob);
 
 	clearUndoStack();
@@ -2255,19 +2236,6 @@ bool ShaderEditorResource::deserialize(InputMemoryStream& blob) {
 
 	return true;
 }
-
-
-bool ShaderEditor::getSavePath()
-{
-	char path[LUMIX_MAX_PATH];
-	if (os::getSaveFilename(Span(path), "Shader edit data\0*.sed\0", "sed"))
-	{
-		m_path = path;
-		return true;
-	}
-	return false;
-}
-
 
 static ImVec2 operator+(const ImVec2& a, const ImVec2& b)
 {
@@ -2433,27 +2401,19 @@ void ShaderEditor::newGraph() {
 }
 
 void ShaderEditor::save() {
-	if (m_path.isEmpty()) {
-		if(getSavePath() && !m_path.isEmpty()) saveAs(m_path.c_str());
-	}
-	else {
-		saveAs(m_path.c_str());
-	}
+	if (m_path.isEmpty()) m_show_save_as = true;
+	else saveAs(m_path.c_str());
 }
 
-void ShaderEditor::onGUIMenu()
-{
+void ShaderEditor::onGUIMenu() {
 	if(ImGui::BeginMenuBar()) {
 		if(ImGui::BeginMenu("File")) {
 			if (ImGui::MenuItem("New")) newGraph();
 			menuItem(m_generate_action, !m_path.isEmpty());
 			ImGui::MenuItem("View source", nullptr, &m_source_open);
-			if (ImGui::MenuItem("Open")) load();
+			if (ImGui::MenuItem("Open")) m_show_open = true;
 			menuItem(m_save_action, true);
-			if (ImGui::MenuItem("Save as")) {
-				if(getSavePath() && !m_path.isEmpty()) saveAs(m_path.c_str());
-			}
-
+			if (ImGui::MenuItem("Save as")) m_show_save_as = true;
 			if (ImGui::BeginMenu("Recent", !m_recent_paths.empty())) {
 				for (const String& s : m_recent_paths) {
 					if (ImGui::MenuItem(s.c_str())) load(s.c_str());
@@ -2523,6 +2483,11 @@ void ShaderEditor::onWindowGUI()
 		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		onGUIMenu();
+		
+		FileSelector& fs = m_app.getFileSelector();
+		if (fs.gui("Open", &m_show_open, "sed", false)) load(fs.getPath());
+		if (fs.gui("Save As", &m_show_save_as, "sed", true)) saveAs(fs.getPath());
+
 		ImGui::BeginChild("canvas");
 		nodeEditorGUI(m_resource->m_nodes, m_resource->m_links);
 		ImGui::EndChild();

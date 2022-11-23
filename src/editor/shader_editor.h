@@ -120,7 +120,6 @@ private:
 	void newGraph();
 	void saveAs(const char* path);
 	void save();
-	void load();
 	void load(const char* path);
 
 	void deserialize(InputMemoryStream& blob) override;
@@ -130,7 +129,6 @@ private:
 	void onLinkDoubleClicked(Link& link, ImVec2 pos) override;
 	void onContextMenu(bool recently_opened, ImVec2 pos) override;
 
-	bool getSavePath();
 	void clear();
 	void onGUIMenu();
 	void onToggle();
@@ -153,6 +151,8 @@ private:
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
 	Array<String> m_recent_paths;
+	bool m_show_save_as = false;
+	bool m_show_open = false;
 
 	ShaderEditorResource* m_resource = nullptr;
 };
