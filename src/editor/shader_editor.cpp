@@ -343,7 +343,7 @@ bool ShaderEditorResource::Node::nodeGUI() {
 	return res;
 }
 
-struct MixNode : public ShaderEditorResource::Node {
+struct MixNode : ShaderEditorResource::Node {
 	explicit MixNode(ShaderEditorResource& resource)
 		: Node(NodeType::MIX, resource)
 	{}
@@ -385,7 +385,7 @@ struct MixNode : public ShaderEditorResource::Node {
 	}
 };
 
-struct CodeNode : public ShaderEditorResource::Node {
+struct CodeNode : ShaderEditorResource::Node {
 	explicit CodeNode(ShaderEditorResource& resource, IAllocator& allocator)
 		: Node(NodeType::CODE, resource)
 		, m_allocator(allocator)
@@ -597,7 +597,7 @@ struct CodeNode : public ShaderEditorResource::Node {
 };
 
 template <NodeType Type>
-struct OperatorNode : public ShaderEditorResource::Node {
+struct OperatorNode : ShaderEditorResource::Node {
 	explicit OperatorNode(ShaderEditorResource& resource)
 		: Node(Type, resource)
 	{}
@@ -688,7 +688,7 @@ struct OperatorNode : public ShaderEditorResource::Node {
 	float b_val = 2;
 };
 
-struct OneMinusNode : public ShaderEditorResource::Node {
+struct OneMinusNode : ShaderEditorResource::Node {
 	explicit OneMinusNode(ShaderEditorResource& resource)
 		: Node(NodeType::ONEMINUS, resource)
 	{}
@@ -741,7 +741,7 @@ struct OneMinusNode : public ShaderEditorResource::Node {
 	}
 };
 
-struct SwizzleNode : public ShaderEditorResource::Node {
+struct SwizzleNode : ShaderEditorResource::Node {
 	explicit SwizzleNode(ShaderEditorResource& resource)
 		: Node(NodeType::SWIZZLE, resource)
 	{
@@ -792,7 +792,7 @@ struct SwizzleNode : public ShaderEditorResource::Node {
 	StaticString<5> m_swizzle;
 };
 
-struct FresnelNode : public ShaderEditorResource::Node {
+struct FresnelNode : ShaderEditorResource::Node {
 	explicit FresnelNode(ShaderEditorResource& resource)
 		: Node(NodeType::FRESNEL, resource)
 	{}
@@ -829,7 +829,7 @@ struct FresnelNode : public ShaderEditorResource::Node {
 };
 
 template <NodeType Type>
-struct FunctionCallNode : public ShaderEditorResource::Node
+struct FunctionCallNode : ShaderEditorResource::Node
 {
 	explicit FunctionCallNode(ShaderEditorResource& resource)
 		: Node(Type, resource)
@@ -938,7 +938,7 @@ static void makeSafeCast(OutputMemoryStream& blob, ShaderEditorResource::ValueTy
 }
 
 template <NodeType Type>
-struct BinaryFunctionCallNode : public ShaderEditorResource::Node
+struct BinaryFunctionCallNode : ShaderEditorResource::Node
 {
 	explicit BinaryFunctionCallNode(ShaderEditorResource& resource)
 		: Node(Type, resource)
@@ -1016,8 +1016,42 @@ struct BinaryFunctionCallNode : public ShaderEditorResource::Node
 };
 
 
+struct PositionNode : ShaderEditorResource::Node {
+	explicit PositionNode(ShaderEditorResource& resource)
+		: Node(NodeType::POSITION, resource)
+	{}
+
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
+
+	void serialize(OutputMemoryStream& blob) override { blob.write(m_space); }
+	void deserialize(InputMemoryStream& blob) override { blob.read(m_space); }
+
+	ShaderEditorResource::ValueType getOutputType(int) const override { return ShaderEditorResource::ValueType::VEC3; }
+
+	void printReference(OutputMemoryStream& blob, int output_idx) const {
+		switch (m_space) {
+			case CAMERA: blob << "v_wpos"; break;
+			case LOCAL: blob << "v_local_position"; break;
+		}
+	}
+
+	bool onGUI() override {
+		ImGuiEx::NodeTitle("Position");
+		outputSlot();
+		return ImGui::Combo("Space", (i32*)&m_space, "Camera\0Local\0");
+	}
+
+	enum Space : u32 {
+		CAMERA,
+		LOCAL
+	};
+
+	Space m_space = CAMERA;
+};
+
 template <NodeType Type>
-struct VaryingNode : public ShaderEditorResource::Node {
+struct VaryingNode : ShaderEditorResource::Node {
 	explicit VaryingNode(ShaderEditorResource& resource)
 		: Node(Type, resource)
 	{}
@@ -1030,7 +1064,6 @@ struct VaryingNode : public ShaderEditorResource::Node {
 
 	ShaderEditorResource::ValueType getOutputType(int) const override { 
 		switch(Type) {
-			case NodeType::POSITION: return ShaderEditorResource::ValueType::VEC3;
 			case NodeType::NORMAL: return ShaderEditorResource::ValueType::VEC3;
 			case NodeType::UV0: return ShaderEditorResource::ValueType::VEC2;
 			default: ASSERT(false); return ShaderEditorResource::ValueType::VEC3;
@@ -1039,7 +1072,6 @@ struct VaryingNode : public ShaderEditorResource::Node {
 
 	void printReference(OutputMemoryStream& blob, int output_idx) const {
 		switch(Type) {
-			case NodeType::POSITION: blob << "v_wpos.xyz"; break;
 			case NodeType::NORMAL: blob << "v_normal"; break;
 			case NodeType::UV0: blob << "v_uv"; break;
 			default: ASSERT(false); break;
@@ -1050,7 +1082,6 @@ struct VaryingNode : public ShaderEditorResource::Node {
 	bool onGUI() override {
 		outputSlot();
 		switch(Type) {
-			case NodeType::POSITION: ImGui::Text("Position"); break;
 			case NodeType::NORMAL: ImGui::Text("Normal"); break;
 			case NodeType::UV0: ImGui::Text("UV0"); break;
 			default: ASSERT(false); break;
@@ -1060,7 +1091,7 @@ struct VaryingNode : public ShaderEditorResource::Node {
 };
 
 template <ShaderEditorResource::ValueType TYPE>
-struct ConstNode : public ShaderEditorResource::Node
+struct ConstNode : ShaderEditorResource::Node
 {
 	explicit ConstNode(ShaderEditorResource& resource)
 		: Node(toNodeType(TYPE), resource)
@@ -1224,7 +1255,7 @@ struct ConstNode : public ShaderEditorResource::Node
 };
 
 
-struct SampleNode : public ShaderEditorResource::Node
+struct SampleNode : ShaderEditorResource::Node
 {
 	explicit SampleNode(ShaderEditorResource& resource, IAllocator& allocator)
 		: Node(NodeType::SAMPLE, resource)
@@ -1266,7 +1297,7 @@ struct SampleNode : public ShaderEditorResource::Node
 	String m_texture;
 };
 
-struct AppendNode : public ShaderEditorResource::Node {
+struct AppendNode : ShaderEditorResource::Node {
 	explicit AppendNode(ShaderEditorResource& resource)
 	: Node(NodeType::APPEND, resource)
 	{}
@@ -1348,7 +1379,7 @@ struct AppendNode : public ShaderEditorResource::Node {
 	}
 };
 
-struct StaticSwitchNode : public ShaderEditorResource::Node {
+struct StaticSwitchNode : ShaderEditorResource::Node {
 	explicit StaticSwitchNode(ShaderEditorResource& resource, IAllocator& allocator)
 		: Node(NodeType::STATIC_SWITCH, resource)
 		, m_define(allocator)
@@ -1416,7 +1447,7 @@ struct StaticSwitchNode : public ShaderEditorResource::Node {
 };
 
 template <NodeType Type>
-struct ParameterNode : public ShaderEditorResource::Node {
+struct ParameterNode : ShaderEditorResource::Node {
 	explicit ParameterNode(ShaderEditorResource& resource, IAllocator& allocator)
 		: Node(Type, resource)
 		, m_name(allocator)
@@ -1461,7 +1492,7 @@ struct ParameterNode : public ShaderEditorResource::Node {
 	String m_name;
 };
 
-struct PinNode : public ShaderEditorResource::Node {
+struct PinNode : ShaderEditorResource::Node {
 	explicit PinNode(ShaderEditorResource& resource)
 		: Node(NodeType::PIN, resource)
 	{}
@@ -1488,7 +1519,7 @@ struct PinNode : public ShaderEditorResource::Node {
 	}
 };
 
-struct PBRNode : public ShaderEditorResource::Node
+struct PBRNode : ShaderEditorResource::Node
 {
 	explicit PBRNode(ShaderEditorResource& resource)
 		: Node(NodeType::PBR, resource)
@@ -1607,7 +1638,7 @@ struct PBRNode : public ShaderEditorResource::Node
 	}
 };
 
-struct IfNode : public ShaderEditorResource::Node
+struct IfNode : ShaderEditorResource::Node
 {
 	explicit IfNode(ShaderEditorResource& resource)
 		: Node(NodeType::IF, resource)
@@ -2032,13 +2063,19 @@ String ShaderEditorResource::generate() {
 		((PBRNode*)m_nodes[0])->generateVS(blob);
 	#endif	
 
+	bool need_local_position = false;
 	for (Node* n : m_nodes) {
+		if (n->m_type == NodeType::POSITION) {
+			need_local_position = need_local_position || ((PositionNode*)n)->m_space == PositionNode::LOCAL;
+		}
 		n->m_generated = false;
 	}
 
 	m_nodes[0]->generateOnce(blob);
 
-	blob << "]]\n})\n";
+	blob << "]]\n";
+	if (need_local_position) blob << ",\nneed_local_position = true\n";
+	blob << "})\n";
 
 	String res(m_allocator);
 	res.resize((u32)blob.size());
@@ -2128,7 +2165,7 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 		case NodeType::CODE:						return LUMIX_NEW(m_allocator, CodeNode)(*this, m_allocator);
 		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
 		case NodeType::FRESNEL:						return LUMIX_NEW(m_allocator, FresnelNode)(*this);
-		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, VaryingNode<NodeType::POSITION>)(*this);
+		case NodeType::POSITION:					return LUMIX_NEW(m_allocator, PositionNode)(*this);
 		case NodeType::NORMAL:						return LUMIX_NEW(m_allocator, VaryingNode<NodeType::NORMAL>)(*this);
 		case NodeType::UV0:							return LUMIX_NEW(m_allocator, VaryingNode<NodeType::UV0>)(*this);
 		case NodeType::SCALAR_PARAM:				return LUMIX_NEW(m_allocator, ParameterNode<NodeType::SCALAR_PARAM>)(*this, m_allocator);
@@ -2478,6 +2515,7 @@ void ShaderEditor::onWindowGUI()
 	if (!m_path.isEmpty()) title << " - " << m_path.c_str();
 	title << "###Shader Editor";
 
+	ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin(title, &m_is_open, ImGuiWindowFlags_MenuBar))
 	{
 		m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
