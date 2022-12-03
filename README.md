@@ -1,6 +1,7 @@
 # Lumix Engine Shader Editor
 
 Visual shader editor for [Lumix Engine](https://github.com/nem0/LumixEngine/)
+
 [How to install this plugin](https://github.com/nem0/LumixEngine/wiki/available-plugins)
 
 ![Screenshot](screenshot.png)
