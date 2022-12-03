@@ -93,7 +93,8 @@ enum class NodeType {
 	SCENE_DEPTH,
 	ONEMINUS,
 	CODE,
-	PIN
+	PIN,
+	BACKFACE_SWITCH,
 };
 
 struct VertexOutput {
@@ -185,6 +186,7 @@ static const struct NodeTypeDesc {
 
 	{"Utility", "Fresnel", NodeType::FRESNEL},
 	{"Utility", "Custom code", NodeType::CODE},
+	{"Utility", "Backface switch", NodeType::BACKFACE_SWITCH},
 	{"Utility", "If", NodeType::IF},
 	{"Utility", "Pixel depth", NodeType::PIXEL_DEPTH},
 	{"Utility", "Scene depth", NodeType::SCENE_DEPTH},
@@ -1638,8 +1640,61 @@ struct PBRNode : ShaderEditorResource::Node
 	}
 };
 
-struct IfNode : ShaderEditorResource::Node
-{
+struct BackfaceSwitchNode : ShaderEditorResource::Node {
+	explicit BackfaceSwitchNode(ShaderEditorResource& resource)
+		: Node(NodeType::BACKFACE_SWITCH, resource)
+	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
+
+	ShaderEditorResource::ValueType getOutputType(int) const override {
+		const Input inputA = getInput(m_resource, m_id, 0);
+		if (inputA) {
+			return inputA.node->getOutputType(inputA.output_idx);
+		}
+		const Input inputB = getInput(m_resource, m_id, 1);
+		if (inputB) {
+			return inputB.node->getOutputType(inputB.output_idx);
+		}
+		return ShaderEditorResource::ValueType::FLOAT;
+	}
+
+	void generate(OutputMemoryStream& blob) override {
+		const Input inputA = getInput(m_resource, m_id, 0);
+		const Input inputB = getInput(m_resource, m_id, 1);
+		if (!inputA && !inputB) return;
+		
+		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << ";\n";
+		if (inputA) {
+			blob << "\tif (gl_FrontFacing) {\n";
+					inputA.node->generateOnce(blob);
+					blob << "\t\tv" << m_id << " = ";
+					inputA.printReference(blob);
+					blob << ";\n\t}\n";
+		}
+		if (inputB) {
+			blob << "\tif (!gl_FrontFacing) {\n";
+					inputB.node->generateOnce(blob);
+					blob << "\t\tv" << m_id << " = ";
+					inputB.printReference(blob);
+					blob << ";\n\t}\n";
+		}
+	}
+
+	bool onGUI() override {
+		ImGuiEx::NodeTitle("Backface switch");
+		outputSlot();
+		inputSlot(); ImGui::TextUnformatted("Front");
+		inputSlot(); ImGui::TextUnformatted("Back");
+		return false;
+	}
+};
+
+struct IfNode : ShaderEditorResource::Node {
 	explicit IfNode(ShaderEditorResource& resource)
 		: Node(NodeType::IF, resource)
 	{
@@ -2159,6 +2214,7 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 		case NodeType::SCENE_DEPTH:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::SCENE_DEPTH>)(*this);
 		case NodeType::SCREEN_POSITION:				return LUMIX_NEW(m_allocator, UniformNode<NodeType::SCREEN_POSITION>)(*this);
 		case NodeType::VERTEX_ID:					return LUMIX_NEW(m_allocator, VertexIDNode)(*this);
+		case NodeType::BACKFACE_SWITCH:				return LUMIX_NEW(m_allocator, BackfaceSwitchNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this, m_allocator);
 		case NodeType::ONEMINUS:					return LUMIX_NEW(m_allocator, OneMinusNode)(*this);
