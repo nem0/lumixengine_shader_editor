@@ -939,6 +939,74 @@ static void makeSafeCast(OutputMemoryStream& blob, ShaderEditorResource::ValueTy
 	}
 }
 
+struct PowerNode : ShaderEditorResource::Node {
+	explicit PowerNode(ShaderEditorResource& resource)
+		: Node(NodeType::POW, resource)
+	{}
+
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+
+	void serialize(OutputMemoryStream& blob) override {
+		blob.write(m_exponent);
+	}
+
+	void deserialize(InputMemoryStream& blob) override {
+		blob.read(m_exponent);
+	}
+	
+	ShaderEditorResource::ValueType getOutputType(int) const override { 
+		const Input input0 = getInput(m_resource, m_id, 0);
+		if (input0) return input0.node->getOutputType(input0.output_idx);
+		return ShaderEditorResource::ValueType::FLOAT;
+	}
+
+	void generate(OutputMemoryStream& blob) override {
+		const Input input0 = getInput(m_resource, m_id, 0);
+		if (!input0) return;
+		input0.node->generateOnce(blob);
+
+		const Input input1 = getInput(m_resource, m_id, 1);
+		if (input1) input1.node->generateOnce(blob);
+
+		const char* type_str = toString(getOutputType(0));
+		blob << "\t\t" << type_str << " v" << m_id << " = pow(";
+		input0.printReference(blob);
+		blob << ", ";
+		if (input1) {
+			input1.printReference(blob);
+			makeSafeCast(blob
+				, input0.node->getOutputType(input0.output_idx)
+				, input1.node->getOutputType(input1.output_idx));
+		}
+		else {
+			blob << type_str << "(" << m_exponent << ")";
+		}
+		blob << ");\n";
+	}
+
+	bool onGUI() override {
+		ImGuiEx::NodeTitle("Power");
+		ImGui::BeginGroup();
+		inputSlot(); ImGui::Text("Base");
+		inputSlot(); 
+		if (getInput(m_resource, m_id, 1)) {
+			ImGui::Text("Exponent");
+		}
+		else {
+			ImGui::DragFloat("Exponent", &m_exponent);
+		}
+
+		ImGui::EndGroup();
+
+		ImGui::SameLine();
+		outputSlot();
+		return false;
+	}
+
+	float m_exponent = 2.f;
+};
+
 template <NodeType Type>
 struct BinaryFunctionCallNode : ShaderEditorResource::Node
 {
@@ -966,7 +1034,6 @@ struct BinaryFunctionCallNode : ShaderEditorResource::Node
 
 	static const char* getName() {
 		switch (Type) {
-			case NodeType::POW: return "pow";
 			case NodeType::DOT: return "dot";
 			case NodeType::CROSS: return "cross";
 			case NodeType::MIN: return "min";
@@ -2255,7 +2322,7 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 		case NodeType::CROSS:						return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::CROSS>)(*this);
 		case NodeType::MIN:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MIN>)(*this);
 		case NodeType::MAX:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MAX>)(*this);
-		case NodeType::POW:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::POW>)(*this);
+		case NodeType::POW:							return LUMIX_NEW(m_allocator, PowerNode)(*this);
 		case NodeType::DISTANCE:					return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::DISTANCE>)(*this);
 	}
 
