@@ -127,7 +127,7 @@ private:
 
 	void onCanvasClicked(ImVec2 pos, i32 hovered_link) override;
 	void onLinkDoubleClicked(Link& link, ImVec2 pos) override;
-	void onContextMenu(bool recently_opened, ImVec2 pos) override;
+	void onContextMenu(ImVec2 pos) override;
 
 	void clear();
 	void onGUIMenu();

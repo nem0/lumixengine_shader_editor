@@ -2486,10 +2486,10 @@ void ShaderEditor::onLinkDoubleClicked(ShaderEditor::Link& link, ImVec2 pos) {
 	pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
 }
 
-void ShaderEditor::onContextMenu(bool recently_opened, ImVec2 pos) {
+void ShaderEditor::onContextMenu(ImVec2 pos) {
 	static char filter[64] = "";
 	ImGui::SetNextItemWidth(150);
-	if (recently_opened) ImGui::SetKeyboardFocusHere();
+	if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
 	ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
 	if (filter[0]) {
 		for (const auto& node_type : NODE_TYPES) {
