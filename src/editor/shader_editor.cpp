@@ -844,7 +844,7 @@ struct FunctionCallNode : ShaderEditorResource::Node
 	void deserialize(InputMemoryStream& blob) override {}
 
 	ShaderEditorResource::ValueType getOutputType(int) const override { 
-		if (Type == NodeType::LENGTH) return ShaderEditorResource::ValueType::FLOAT;
+		if constexpr (Type == NodeType::LENGTH) return ShaderEditorResource::ValueType::FLOAT;
 		const Input input0 = getInput(m_resource, m_id, 0);
 		if (input0) return input0.node->getOutputType(input0.output_idx);
 		return ShaderEditorResource::ValueType::FLOAT;
