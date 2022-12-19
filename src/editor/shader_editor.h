@@ -67,7 +67,7 @@ struct ShaderEditorResource {
 		virtual bool onGUI() = 0;
 	};
 
-	ShaderEditorResource(IAllocator& allocator);
+	ShaderEditorResource(StudioApp& app);
 	~ShaderEditorResource();
 
 	Node* createNode(int type);
@@ -85,6 +85,7 @@ struct ShaderEditorResource {
 	void deleteUnreachable();
 	String generate();
 
+	StudioApp& m_app;
 	IAllocator& m_allocator;
 	Array<Link> m_links;
 	Array<Node*> m_nodes;
@@ -117,7 +118,7 @@ private:
 	
 	void saveSource();
 	void generateAndSaveSource();
-	void newGraph();
+	void newGraph(bool is_particle_shader);
 	void saveAs(const char* path);
 	void save();
 	void load(const char* path);

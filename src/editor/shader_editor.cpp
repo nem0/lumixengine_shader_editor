@@ -11,6 +11,7 @@
 #include "engine/plugin.h"
 #include "engine/stream.h"
 #include "engine/string.h"
+#include "renderer/editor/particle_editor.h"
 #include "renderer/model.h"
 #include "renderer/renderer.h"
 #include "renderer/shader.h"
@@ -1592,10 +1593,22 @@ struct PBRNode : ShaderEditorResource::Node
 {
 	explicit PBRNode(ShaderEditorResource& resource)
 		: Node(NodeType::PBR, resource)
+		, m_vertex_decl(gpu::PrimitiveType::TRIANGLE_STRIP)
 	{}
 
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return false; }
+
+	void serialize(OutputMemoryStream& blob) override {
+		blob.write(m_type);
+		blob.write(m_vertex_decl);
+	}
+
+	void deserialize(InputMemoryStream& blob) override {
+		blob.read(m_type);
+		blob.read(m_vertex_decl);
+	}
+
 
 	static void generate(OutputMemoryStream& blob, Node* node) {
 		if (!node) return;
@@ -1605,24 +1618,150 @@ struct PBRNode : ShaderEditorResource::Node
 		node->generateOnce(blob);
 	}
 
-	void generateVS(OutputMemoryStream& blob) const {
-		const Input input = getInput(m_resource, m_id, 0);
-		generate(blob, input.node);
-		if (!input) return;
-		input.node->generateOnce(blob);
-		blob << "v_wpos = ";
-		input.printReference(blob);
-		blob << ";";
+	static const char* typeToString(const gpu::Attribute& attr) {
+		switch (attr.type) {
+			case gpu::AttributeType::FLOAT:
+				break;
+			case gpu::AttributeType::I16:
+			case gpu::AttributeType::I8:
+				if (attr.flags & gpu::Attribute::AS_INT) {
+					switch (attr.components_count) {
+						case 1: return "int";
+						case 2: return "ivec2";
+						case 3: return "ivec3";
+						case 4: return "ivec4";
+					}
+					ASSERT(false);
+					return "int";
+				}
+				break;
+			case gpu::AttributeType::U8:
+				if (attr.flags & gpu::Attribute::AS_INT) {
+					switch (attr.components_count) {
+						case 1: return "uint";
+						case 2: return "uvec2";
+						case 3: return "uvec3";
+						case 4: return "uvec4";
+					}
+					ASSERT(false);
+					return "int";
+				}
+				break;
+		}
+		switch (attr.components_count) {
+			case 1: return "float";
+			case 2: return "vec2";
+			case 3: return "vec3";
+			case 4: return "vec4";
+		}
+		ASSERT(false);
+		return "float";
 	}
 
 	void generate(OutputMemoryStream& blob) override {
+		blob << "import \"pipelines/surface_base.inc\"\n\n";
+	
+		IAllocator& allocator = m_resource.m_allocator;
+		Array<String> uniforms(allocator);
+		Array<String> defines(allocator);
+		Array<String> textures(allocator);
+	
+		auto add_uniform = [&](auto* n, const char* type) {
+			const i32 idx = uniforms.find([&](const String& u) { return u == n->m_name; });
+			if (idx < 0) {
+				uniforms.emplace(n->m_name.c_str(), allocator);
+				blob << "uniform(\"" << n->m_name.c_str() << "\", \"" << type << "\")\n";
+			}
+		};
+	
+		auto add_define = [&](StaticSwitchNode* n){
+			const i32 idx = defines.find([&](const String& u) { return u == n->m_define; });
+			if (idx < 0) {
+				defines.emplace(n->m_define.c_str(), allocator);
+				blob << "define(\"" << n->m_define.c_str() << "\")\n";
+			}
+		};
+	
+		auto add_texture = [&](SampleNode* n){
+			const i32 idx = textures.find([&](const String& u) { return u == n->m_texture; });
+			if (idx < 0) {
+				textures.emplace(n->m_texture.c_str(), allocator);
+				blob << "{\n"
+					<< "\tname = \"" << n->m_texture.c_str() << "\",\n"
+					<< "\tdefault_texture = \"textures/common/white.tga\"\n"
+					<< "}\n";
+			}
+		};
+	
+		for (Node* n : m_resource.m_nodes) {
+			if (!n->m_reachable) continue;
+			switch(n->m_type) {
+				case NodeType::SCALAR_PARAM:
+					add_uniform((ParameterNode<NodeType::SCALAR_PARAM>*)n, "float");
+					break;
+				case NodeType::VEC4_PARAM:
+					add_uniform((ParameterNode<NodeType::VEC4_PARAM>*)n, "vec4");
+					break;
+				case NodeType::COLOR_PARAM:
+					add_uniform((ParameterNode<NodeType::COLOR_PARAM>*)n, "color");
+					break;
+				case NodeType::STATIC_SWITCH:
+					add_define((StaticSwitchNode*)n);
+					break;
+				default: break;
+			}
+		}
+	
+		if (m_type == Type::PARTICLES) {
+			blob << "common(\"#define PARTICLES\\n\")\n";
+		}
+
+		blob << "surface_shader_ex({\n";
+		blob << "texture_slots = {\n";
+		for (Node* n : m_resource.m_nodes) {
+			if (!n->m_reachable) continue;
+			if (n->m_type == NodeType::SAMPLE) add_texture((SampleNode*)n);
+		}
+		blob << "},\n";
+	
+		if (m_type == Type::PARTICLES) {
+			blob << "vertex_preface = [[\n";
+			for (u32 i = 0; i < m_vertex_decl.attributes_count; ++i) {
+				blob << "\tlayout(location = " << i << ") in " << typeToString(m_vertex_decl.attributes[i]) << " i_" << i << ";\n";
+			}
+			blob << R"#(
+					layout (location = 0) out vec2 v_uv;
+				]],
+				vertex = [[
+					vec2 pos = vec2(gl_VertexID & 1, (gl_VertexID & 2) * 0.5);
+					v_uv = pos;
+					pos = pos * 2 - 1;
+					gl_Position = Pass.projection * ((Pass.view * u_model * vec4(i_0.xyz, 1)) + vec4(pos.xy, 0, 0));
+				]],
+				fragment_preface = [[
+					layout (location = 0) in vec2 v_uv;
+				]],
+			)#";
+		}
+
+		blob << "fragment = [[\n";
+	
+		bool need_local_position = false;
+		for (Node* n : m_resource.m_nodes) {
+			if (n->m_type == NodeType::POSITION) {
+				need_local_position = need_local_position || ((PositionNode*)n)->m_space == PositionNode::LOCAL;
+			}
+			n->m_generated = false;
+		}
+
 		const struct {
 			const char* name;
 			const char* default_value;
+			const char* particle_default = nullptr;
 		}
 		fields[] = { 
 			{ "albedo", "vec3(1, 0, 1)" },
-			{ "N", "v_normal" },
+			{ "N", "v_normal", "vec3(0, 1, 0)" },
 			{ "alpha", "1" }, 
 			{ "roughness", "1" },
 			{ "metallic", "0" },
@@ -1668,13 +1807,24 @@ struct PBRNode : ShaderEditorResource::Node
 				blob << ";\n";
 			}
 			else {
-				blob << "\tdata." << field.name << " = " << field.default_value << ";\n";
+				if (m_type == Type::PARTICLES && field.particle_default) {
+					blob << "\tdata." << field.name << " = " << field.particle_default << ";\n";
+				}
+				else {
+					blob << "\tdata." << field.name << " = " << field.default_value << ";\n";
+				}
 			}
 		}
+
+		blob << "data.V = vec3(0);\n";
+		blob << "data.wpos = vec3(0);\n";
+		blob << "]]\n";
+		if (need_local_position) blob << ",\nneed_local_position = true\n";
+		blob << "})\n";
 	}
 
 	bool onGUI() override {
-		ImGuiEx::NodeTitle("PBR");
+		ImGuiEx::NodeTitle(m_type == Type::SURFACE ? "PBR Surface" : "PBR Particles");
 		
 		inputSlot();
 		ImGui::TextUnformatted("Albedo");
@@ -1703,8 +1853,26 @@ struct PBRNode : ShaderEditorResource::Node
 		inputSlot();
 		ImGui::TextUnformatted("Shadow");
 
+		if (m_type == Type::PARTICLES && ImGui::Button("Copy vertex declaration")) {
+			m_show_fs = true;
+		}
+
+		FileSelector& fs = m_resource.m_app.getFileSelector();
+		if (fs.gui("Select particle", &m_show_fs, "par", false)) {
+			m_vertex_decl = ParticleEditor::getVertexDecl(fs.getPath(), m_resource.m_app);
+		}
+
 		return false;
 	}
+
+	enum class Type : u32 {
+		SURFACE,
+		PARTICLES
+	};
+
+	gpu::VertexDecl m_vertex_decl;
+	Type m_type = Type::SURFACE;
+	bool m_show_fs = false;
 };
 
 struct BackfaceSwitchNode : ShaderEditorResource::Node {
@@ -1976,7 +2144,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_recent_paths(app.getAllocator())
 	, NodeEditor(app.getAllocator())
 {
-	newGraph();
+	newGraph(false);
 	m_save_action.init(ICON_FA_SAVE "Save", "Shader editor save", "shader_editor_save", ICON_FA_SAVE, os::Keycode::S, Action::Modifiers::CTRL, true);
 	m_save_action.func.bind<&ShaderEditor::save>(this);
 	m_save_action.plugin = this;
@@ -2117,87 +2285,9 @@ String ShaderEditorResource::generate() {
 	colorLinks();
 
 	OutputMemoryStream blob(m_allocator);
-	blob.reserve(32*1024);
-
-	blob << "import \"pipelines/surface_base.inc\"\n\n";
-
-	Array<String> uniforms(m_allocator);
-	Array<String> defines(m_allocator);
-	Array<String> textures(m_allocator);
-
-	auto add_uniform = [&](auto* n, const char* type) {
-		const i32 idx = uniforms.find([&](const String& u) { return u == n->m_name; });
-		if (idx < 0) {
-			uniforms.emplace(n->m_name.c_str(), m_allocator);
-			blob << "uniform(\"" << n->m_name.c_str() << "\", \"" << type << "\")\n";
-		}
-	};
-
-	auto add_define = [&](StaticSwitchNode* n){
-		const i32 idx = defines.find([&](const String& u) { return u == n->m_define; });
-		if (idx < 0) {
-			defines.emplace(n->m_define.c_str(), m_allocator);
-			blob << "define(\"" << n->m_define.c_str() << "\")\n";
-		}
-	};
-
-	auto add_texture = [&](SampleNode* n){
-		const i32 idx = textures.find([&](const String& u) { return u == n->m_texture; });
-		if (idx < 0) {
-			textures.emplace(n->m_texture.c_str(), m_allocator);
-			blob << "{\n"
-				<< "\tname = \"" << n->m_texture.c_str() << "\",\n"
-				<< "\tdefault_texture = \"textures/common/white.tga\"\n"
-				<< "}\n";
-		}
-	};
-
-	for (Node* n : m_nodes) {
-		if (!n->m_reachable) continue;
-		switch(n->m_type) {
-			case NodeType::SCALAR_PARAM:
-				add_uniform((ParameterNode<NodeType::SCALAR_PARAM>*)n, "float");
-				break;
-			case NodeType::VEC4_PARAM:
-				add_uniform((ParameterNode<NodeType::VEC4_PARAM>*)n, "vec4");
-				break;
-			case NodeType::COLOR_PARAM:
-				add_uniform((ParameterNode<NodeType::COLOR_PARAM>*)n, "color");
-				break;
-			case NodeType::STATIC_SWITCH:
-				add_define((StaticSwitchNode*)n);
-				break;
-			default: break;
-		}
-	}
-
-	blob << "surface_shader_ex({\n";
-	blob << "texture_slots = {\n";
-	for (Node* n : m_nodes) {
-		if (!n->m_reachable) continue;
-		if (n->m_type == NodeType::SAMPLE) add_texture((SampleNode*)n);
-	}
-	blob << "},\n";
-
-	blob << "fragment = [[\n";
-
-	#if 0 // TODO
-		((PBRNode*)m_nodes[0])->generateVS(blob);
-	#endif	
-
-	bool need_local_position = false;
-	for (Node* n : m_nodes) {
-		if (n->m_type == NodeType::POSITION) {
-			need_local_position = need_local_position || ((PositionNode*)n)->m_space == PositionNode::LOCAL;
-		}
-		n->m_generated = false;
-	}
+	blob.reserve(32 * 1024);
 
 	m_nodes[0]->generateOnce(blob);
-
-	blob << "]]\n";
-	if (need_local_position) blob << ",\nneed_local_position = true\n";
-	blob << "})\n";
 
 	String res(m_allocator);
 	res.resize((u32)blob.size());
@@ -2257,7 +2347,7 @@ void ShaderEditorResource::serialize(OutputMemoryStream& blob) {
 
 void ShaderEditor::clear() {
 	LUMIX_DELETE(m_allocator, m_resource);
-	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_allocator);
+	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_app);
 	clearUndoStack();
 }
 
@@ -2519,7 +2609,7 @@ void ShaderEditor::serialize(OutputMemoryStream& blob) {
 
 void ShaderEditor::deserialize(InputMemoryStream& blob) {
 	LUMIX_DELETE(m_allocator, m_resource);
-	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_allocator);
+	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_app);
 	m_resource->deserialize(blob);
 }
 
@@ -2534,10 +2624,11 @@ void ShaderEditorResource::destroyNode(Node* node) {
 	m_nodes.eraseItem(node);
 }
 
-ShaderEditorResource::ShaderEditorResource(IAllocator& allocator)
-	: m_links(allocator)
-	, m_nodes(allocator)
-	, m_allocator(allocator)
+ShaderEditorResource::ShaderEditorResource(StudioApp& app)
+	: m_app(app)
+	, m_allocator(app.getAllocator())
+	, m_links(m_allocator)
+	, m_nodes(m_allocator)
 {}
 
 ShaderEditorResource::~ShaderEditorResource() {
@@ -2546,15 +2637,17 @@ ShaderEditorResource::~ShaderEditorResource() {
 	}
 }
 
-void ShaderEditor::newGraph() {
+void ShaderEditor::newGraph(bool is_particle_shader) {
 	clear();
 
 	m_path = "";
 	
-	m_resource->m_nodes.push(LUMIX_NEW(m_allocator, PBRNode)(*m_resource));
-	m_resource->m_nodes.back()->m_pos.x = 50;
-	m_resource->m_nodes.back()->m_pos.y = 50;
-	m_resource->m_nodes.back()->m_id = ++m_resource->m_last_node_id;
+	PBRNode* output = LUMIX_NEW(m_allocator, PBRNode)(*m_resource);
+	output->m_type = is_particle_shader ? PBRNode::Type::PARTICLES : PBRNode::Type::SURFACE;
+	m_resource->m_nodes.push(output);
+	output->m_pos.x = 50;
+	output->m_pos.y = 50;
+	output->m_id = ++m_resource->m_last_node_id;
 
 	clearUndoStack();
 	pushUndo(NO_MERGE_UNDO);
@@ -2568,7 +2661,11 @@ void ShaderEditor::save() {
 void ShaderEditor::onGUIMenu() {
 	if(ImGui::BeginMenuBar()) {
 		if(ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem("New")) newGraph();
+			if (ImGui::BeginMenu("New")) {
+				if (ImGui::MenuItem("Particles")) newGraph(true);
+				if (ImGui::MenuItem("Surface")) newGraph(false);
+				ImGui::EndMenu();
+			}
 			menuItem(m_generate_action, !m_path.isEmpty());
 			ImGui::MenuItem("View source", nullptr, &m_source_open);
 			if (ImGui::MenuItem("Open")) m_show_open = true;
