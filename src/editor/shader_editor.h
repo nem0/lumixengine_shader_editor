@@ -31,21 +31,20 @@ struct ShaderEditorResource {
 		VEC3,
 		VEC4,
 		IVEC4,
-		MATRIX3,
-		MATRIX4,
 
 		COUNT,
 		NONE
 	};
 
 	struct Node : NodeEditorNode {
-		Node(NodeType type, ShaderEditorResource& resource);
+		Node(ShaderEditorResource& resource);
 		virtual ~Node() {}
 
 		virtual void serialize(OutputMemoryStream&blob) {}
 		virtual void deserialize(InputMemoryStream&blob) {}
 		virtual void printReference(OutputMemoryStream& blob, int output_idx) const;
 		virtual ValueType getOutputType(int index) const { return ValueType::FLOAT; }
+		virtual NodeType getType() const = 0;
 
 		bool nodeGUI() override;
 		void generateOnce(OutputMemoryStream& blob);
@@ -59,7 +58,6 @@ struct ShaderEditorResource {
 		u32 m_input_count = 0;
 		u32 m_output_count = 0;
 
-		NodeType m_type;
 		ShaderEditorResource& m_resource;
 
 	protected:
@@ -84,6 +82,7 @@ struct ShaderEditorResource {
 	bool deserialize(InputMemoryStream& blob);
 	void deleteUnreachable();
 	String generate();
+	bool isParticleShader() const;
 
 	StudioApp& m_app;
 	IAllocator& m_allocator;
@@ -135,7 +134,6 @@ private:
 	void onToggle();
 	void deleteSelectedNodes();
 	void deleteUnreachable();
-	void pushRecent(const char* path);
 
 	StudioApp& m_app;
 	IAllocator& m_allocator;
@@ -151,7 +149,7 @@ private:
 	Action m_generate_action;
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
-	Array<String> m_recent_paths;
+	RecentPaths m_recent_paths;
 	bool m_show_save_as = false;
 	bool m_show_open = false;
 
