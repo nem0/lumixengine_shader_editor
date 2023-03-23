@@ -2718,8 +2718,8 @@ void ShaderEditor::onWindowGUI()
 	if (!m_is_open) return;
 
 	StaticString<LUMIX_MAX_PATH + 25> title("Shader Editor");
-	if (!m_path.isEmpty()) title << " - " << m_path.c_str();
-	title << "###Shader Editor";
+	if (!m_path.isEmpty()) title.append(" - ", m_path.c_str());
+	title.add("###Shader Editor");
 
 	ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin(title, &m_is_open, ImGuiWindowFlags_MenuBar))
