@@ -92,6 +92,10 @@ enum class NodeType {
 	CODE,
 	PIN,
 	BACKFACE_SWITCH,
+
+	FUNCTION_INPUT,
+	FUNCTION_OUTPUT,
+	FUNCTION_CALL
 };
 
 struct VertexOutput {
@@ -191,6 +195,7 @@ static const struct NodeTypeDesc {
 	{0,		"Utility", "Scene depth", NodeType::SCENE_DEPTH},
 	{0,		"Utility", "Screen position", NodeType::SCREEN_POSITION},
 	{0,		"Utility", "Static switch", NodeType::STATIC_SWITCH},
+	//{0,		"Utility", "Function input", NodeType::FUNCTION_INPUT}, // manual context menu
 	{'S',	"Utility", "Swizzle", NodeType::SWIZZLE},
 
 	{0,		"Math", "Abs", NodeType::ABS},
@@ -235,7 +240,19 @@ static const struct NodeTypeDesc {
 	{0, "Vertex", "UV0", NodeType::UV0}
 };
 
-
+static bool edit(const char* label, ShaderEditorResource::ValueType* type) {
+	bool changed = false;
+	if (ImGui::BeginCombo(label, toString(*type))) {
+		if (ImGui::Selectable("bool")) { *type = ShaderEditorResource::ValueType::BOOL; changed = true; }
+		if (ImGui::Selectable("int")) { *type = ShaderEditorResource::ValueType::INT; changed = true; }
+		if (ImGui::Selectable("float")) { *type = ShaderEditorResource::ValueType::FLOAT; changed = true; }
+		if (ImGui::Selectable("vec2")) { *type = ShaderEditorResource::ValueType::VEC2; changed = true; }
+		if (ImGui::Selectable("vec3")) { *type = ShaderEditorResource::ValueType::VEC3; changed = true; }
+		if (ImGui::Selectable("vec4")) { *type = ShaderEditorResource::ValueType::VEC4; changed = true; }
+		ImGui::EndCombo();
+	}
+	return changed;
+}
 
 template <typename F>
 static void	forEachInput(const ShaderEditorResource& resource, int node_id, const F& f) {
@@ -291,6 +308,7 @@ void ShaderEditorResource::Node::printReference(OutputMemoryStream& blob, int ou
 
 ShaderEditorResource::Node::Node(ShaderEditorResource& resource)
 	: m_resource(resource)
+	, m_error(resource.m_editor.getAllocator())
 {
 	m_id = 0xffFF;
 }
@@ -316,7 +334,15 @@ bool ShaderEditorResource::Node::nodeGUI() {
 	m_input_count = 0;
 	m_output_count = 0;
 	bool res = onGUI();
+
+	if (m_error.length() > 0) {
+		ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0xff, 0, 0, 0xff));
+	}
 	ImGuiEx::EndNode();
+	if (m_error.length() > 0) {
+		ImGui::PopStyleColor();
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m_error.c_str());
+	}
 
 	ASSERT((m_input_count > 0) == hasInputPins());
 	ASSERT((m_output_count > 0) == hasOutputPins());
@@ -348,15 +374,16 @@ struct MixNode : ShaderEditorResource::Node {
 		return false;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
 		const Input input1 = getInput(m_resource, m_id, 1);
 		const Input input2 = getInput(m_resource, m_id, 2);
-		if (!input0 || !input1 || !input2) return;
+		if (!input0 || !input1 || !input2) {
+			return error("Missing input");
+		}
 		input0.node->generateOnce(blob);
 		input1.node->generateOnce(blob);
 		input2.node->generateOnce(blob);
-
 		
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << " = mix(";
 		input0.printReference(blob);
@@ -365,6 +392,7 @@ struct MixNode : ShaderEditorResource::Node {
 		blob << ", ";
 		input2.printReference(blob);
 		blob << ");\n";
+		return true;
 	}
 };
 
@@ -415,20 +443,6 @@ struct CodeNode : ShaderEditorResource::Node {
 
 	bool hasInputPins() const override { return !m_inputs.empty(); }
 	bool hasOutputPins() const override { return !m_outputs.empty(); }
-
-	bool edit(const char* label, ShaderEditorResource::ValueType* type) {
-		bool changed = false;
-		if (ImGui::BeginCombo(label, toString(*type))) {
-			if (ImGui::Selectable("bool")) { *type = ShaderEditorResource::ValueType::BOOL; changed = true; }
-			if (ImGui::Selectable("int")) { *type = ShaderEditorResource::ValueType::INT; changed = true; }
-			if (ImGui::Selectable("float")) { *type = ShaderEditorResource::ValueType::FLOAT; changed = true; }
-			if (ImGui::Selectable("vec2")) { *type = ShaderEditorResource::ValueType::VEC2; changed = true; }
-			if (ImGui::Selectable("vec3")) { *type = ShaderEditorResource::ValueType::VEC3; changed = true; }
-			if (ImGui::Selectable("vec4")) { *type = ShaderEditorResource::ValueType::VEC4; changed = true; }
-			ImGui::EndCombo();
-		}
-		return changed;
-	}
 
 	void fixLinks(u32 deleted_idx, bool is_input) {
 		const ShaderEditorResource::Link* to_del = nullptr;
@@ -546,7 +560,7 @@ struct CodeNode : ShaderEditorResource::Node {
 		return changed;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		for (const Variable& input_var : m_inputs) {
 			const u32 idx = u32(&input_var - m_inputs.begin());
 			const Input input = getInput(m_resource, m_id, idx);
@@ -563,6 +577,7 @@ struct CodeNode : ShaderEditorResource::Node {
 		}
 
 		blob << m_code.c_str();
+		return true;
 	}
 	
 	void printReference(OutputMemoryStream& blob, int output_idx) const override {
@@ -609,11 +624,12 @@ struct OperatorNode : ShaderEditorResource::Node {
 		return ShaderEditorResource::ValueType::FLOAT;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
 		const Input input1 = getInput(m_resource, m_id, 1);
 		if (input0) input0.node->generateOnce(blob);
 		if (input1) input1.node->generateOnce(blob);
+		return true;
 	}
 
 	void printReference(OutputMemoryStream& blob, int attr_idx) const override
@@ -691,10 +707,11 @@ struct OneMinusNode : ShaderEditorResource::Node {
 		return input.node->getOutputType(input.output_idx);
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input = getInput(m_resource, m_id, 0);
-		if (!input) return;
+		if (!input) return error("Missing input");
 		input.node->generateOnce(blob);
+		return true;
 	}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
@@ -756,10 +773,11 @@ struct SwizzleNode : ShaderEditorResource::Node {
 		}
 	}
 	
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input = getInput(m_resource, m_id, 0);
-		if (!input) return;
+		if (!input) return error("Missing input");
 		input.node->generateOnce(blob);
+		return true;
 	}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
@@ -812,19 +830,173 @@ struct FresnelNode : ShaderEditorResource::Node {
 		return false;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		// TODO use data.normal instead of v_normal
 		blob << "float v" << m_id << " = mix(" << F0 << ", 1.0, pow(1 - saturate(dot(-normalize(v_wpos.xyz), v_normal)), " << power << "));\n";
+		return true;
 	}
 
 	float F0 = 0.04f;
 	float power = 5.0f;
 };
 
-template <NodeType Type>
-struct FunctionCallNode : ShaderEditorResource::Node
-{
+struct FunctionInputNode : ShaderEditorResource::Node {
+	explicit FunctionInputNode(ShaderEditorResource& resource, IAllocator& allocator)
+		: Node(resource)
+		, m_name(allocator)
+	{}
+
+	NodeType getType() const override { return NodeType::FUNCTION_INPUT; }
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
+
+	bool onGUI() override {
+		ImColor color(ImGui::GetStyle().Colors[ImGuiCol_Tab]);
+		ImGuiEx::BeginNodeTitleBar(color);
+		ImGui::Text("Input %s (%s)", m_name.c_str(), toString(m_type));
+		ImGuiEx::EndNodeTitleBar();
+
+		outputSlot();
+		bool res = inputString("Name", &m_name);
+		res = edit("Type", &m_type) || res;
+		return res;
+	}
+
+	void serialize(OutputMemoryStream& blob) override {
+		blob.writeString(m_name.c_str());
+		blob.write(m_type);
+	}
+	void deserialize(InputMemoryStream& blob) override {
+		m_name = blob.readString();
+		blob.read(m_type);
+	}
+	
+	bool generate(OutputMemoryStream& blob) override { return true; }
+	
+	void printReference(OutputMemoryStream& blob, int attr_idx) const override {
+		blob << m_name.c_str();
+	}
+
+	ShaderEditorResource::ValueType getOutputType(i32) const override { return m_type; }
+
+	String m_name;
+	ShaderEditorResource::ValueType m_type = ShaderEditorResource::ValueType::FLOAT;
+};
+
+struct FunctionOutputNode : ShaderEditorResource::Node {
+	explicit FunctionOutputNode(ShaderEditorResource& resource)
+		: Node(resource)
+	{}
+
+	NodeType getType() const override { return NodeType::FUNCTION_OUTPUT; }
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return false; }
+
+	bool onGUI() override {
+		ImGuiEx::NodeTitle("Function output");
+		inputSlot();
+		ImGui::TextUnformatted(" ");
+		return false;
+	}
+
+	void serialize(OutputMemoryStream& blob) override {}
+	void deserialize(InputMemoryStream& blob) override {}
+	
+	bool generate(OutputMemoryStream& blob) override {
+		const Input input = getInput(m_resource, m_id, 0);
+		if (!input) return error("Missing input");
+
+		const ShaderEditorResource::ValueType output_type = input.node->getOutputType(input.output_idx);
+		Span<const char> name = Path::getBasename(m_resource.m_path.c_str());
+		blob << toString(output_type) << " " << name << "(";
+
+		bool first_arg = true;
+		for (const Node* node : m_resource.m_nodes) {
+			if (node->getType() != NodeType::FUNCTION_INPUT) continue;
+			
+			FunctionInputNode* n = (FunctionInputNode*)node;
+			if (!first_arg) blob << ", ";
+			blob << toString(n->m_type) << " " << n->m_name.c_str();
+			first_arg = false;
+		}
+
+		blob << ") {\n";
+		if (input) {
+			input.node->generateOnce(blob);
+			blob << "\treturn ";
+			input.printReference(blob);
+			blob << ";\n";
+		}
+		blob << "}";
+		return true;
+	}
+};
+
+struct FunctionCallNode : ShaderEditorResource::Node {
 	explicit FunctionCallNode(ShaderEditorResource& resource)
+		: Node(resource)
+	{}
+
+	NodeType getType() const override { return NodeType::FUNCTION_CALL; }
+	bool hasInputPins() const override { return true; }
+	bool hasOutputPins() const override { return true; }
+
+	void serialize(OutputMemoryStream& blob) override { blob.writeString(m_function_resource->m_path.c_str()); }
+	void deserialize(InputMemoryStream& blob) override {
+		const char* path = blob.readString();
+		for (const auto& f : m_resource.m_editor.getFunctions()) {
+			if (f->m_path == path) {
+				m_function_resource = f.get();
+				break;
+			}
+		}
+	}
+
+	ShaderEditorResource::ValueType getOutputType(int) const override { return m_function_resource->getFunctionOutputType(); }
+	
+	bool generate(OutputMemoryStream& blob) override {
+		Span<const char> fn_name = Path::getBasename(m_function_resource->m_path.c_str());
+		ShaderEditorResource::ValueType type = m_function_resource->getFunctionOutputType();
+		blob << "\t" << toString(type) << " v" << m_id << " = " << fn_name << "(";
+		u32 input_count = 0;
+		for (const Node* n : m_function_resource->m_nodes) {
+			if (n->getType() == NodeType::FUNCTION_INPUT) ++input_count;
+		}
+
+		for (u32 i = 0; i < input_count; ++i) {
+			const Input input = getInput(m_resource, m_id, i);
+			if (!input) {
+				return error("Input not connected");
+			}
+			if (i > 0) blob << ", ";
+			input.printReference(blob);
+		}
+		blob << ");\n";
+		return true;
+	}
+
+	bool onGUI() override {
+		Span<const char> basename = Path::getBasename(m_function_resource->m_path.c_str());
+		StaticString<LUMIX_MAX_PATH> name(basename);
+		ImGuiEx::NodeTitle(name);
+		outputSlot();
+		for (const Node* node : m_function_resource->m_nodes) {
+			if (node->getType() != NodeType::FUNCTION_INPUT) continue;
+
+			FunctionInputNode* n = (FunctionInputNode*)node;
+			inputSlot();
+			ImGui::TextUnformatted(n->m_name.c_str());
+		}
+		return false;
+	}
+
+	ShaderEditorResource* m_function_resource;
+};
+
+template <NodeType Type>
+struct BuiltinFunctionCallNode : ShaderEditorResource::Node
+{
+	explicit BuiltinFunctionCallNode(ShaderEditorResource& resource)
 		: Node(resource)
 	{}
 
@@ -869,7 +1041,7 @@ struct FunctionCallNode : ShaderEditorResource::Node
 		}
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
 
 		if (input0) input0.node->generateOnce(blob);
@@ -882,6 +1054,7 @@ struct FunctionCallNode : ShaderEditorResource::Node
 			blob << "0";
 		}
 		blob << ");\n";
+		return true;
 	}
 
 	bool onGUI() override {
@@ -955,9 +1128,9 @@ struct PowerNode : ShaderEditorResource::Node {
 		return ShaderEditorResource::ValueType::FLOAT;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
-		if (!input0) return;
+		if (!input0) return error("Missing input");
 		input0.node->generateOnce(blob);
 
 		const Input input1 = getInput(m_resource, m_id, 1);
@@ -977,6 +1150,7 @@ struct PowerNode : ShaderEditorResource::Node {
 			blob << type_str << "(" << m_exponent << ")";
 		}
 		blob << ");\n";
+		return true;
 	}
 
 	bool onGUI() override {
@@ -1002,9 +1176,9 @@ struct PowerNode : ShaderEditorResource::Node {
 };
 
 template <NodeType Type>
-struct BinaryFunctionCallNode : ShaderEditorResource::Node
+struct BinaryBuiltinFunctionCallNode : ShaderEditorResource::Node
 {
-	explicit BinaryFunctionCallNode(ShaderEditorResource& resource)
+	explicit BinaryBuiltinFunctionCallNode(ShaderEditorResource& resource)
 		: Node(resource)
 	{
 	}
@@ -1038,7 +1212,7 @@ struct BinaryFunctionCallNode : ShaderEditorResource::Node
 		}
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
 		const Input input1 = getInput(m_resource, m_id, 1);
 		if (input0) input0.node->generateOnce(blob);
@@ -1064,6 +1238,7 @@ struct BinaryFunctionCallNode : ShaderEditorResource::Node
 			blob << "1";
 		}
 		blob << ");\n";
+		return true;
 	}
 
 	bool onGUI() override {
@@ -1200,11 +1375,12 @@ struct ConstNode : ShaderEditorResource::Node
 		blob << m_value[idx];
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		for (u32 i = 0; i < 4; ++i) {
 			const Input input = getInput(m_resource, m_id, i);
 			if (input) input.node->generateOnce(blob);
 		}
+		return true;
 	}
 
 	void printReference(OutputMemoryStream& blob, int output_idx) const override {
@@ -1335,7 +1511,7 @@ struct SampleNode : ShaderEditorResource::Node
 	void deserialize(InputMemoryStream& blob) override { m_texture = blob.readString(); }
 	ShaderEditorResource::ValueType getOutputType(int) const override { return ShaderEditorResource::ValueType::VEC4; }
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
 		if (input0) input0.node->generateOnce(blob);
 		blob << "\t\tvec4 v" << m_id << " = ";
@@ -1345,6 +1521,7 @@ struct SampleNode : ShaderEditorResource::Node
 		if (input0) input0.printReference(blob);
 		else blob << "v_uv";
 		blob << ");\n";
+		return true;
 	}
 
 	bool onGUI() override {
@@ -1424,11 +1601,12 @@ struct AppendNode : ShaderEditorResource::Node {
 		}
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input0 = getInput(m_resource, m_id, 0);
 		if (input0) input0.node->generateOnce(blob);
 		const Input input1 = getInput(m_resource, m_id, 1);
 		if (input1) input1.node->generateOnce(blob);
+		return true;
 	}
 
 	void printReference(OutputMemoryStream& blob,  int output_idx) const override {
@@ -1486,7 +1664,7 @@ struct StaticSwitchNode : ShaderEditorResource::Node {
 		return toString(input.node->getOutputType(input.output_idx));
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		blob << "#ifdef " << m_define.c_str() << "\n";
 		const Input input0 = getInput(m_resource, m_id, 0);
 		if (input0) {
@@ -1499,11 +1677,12 @@ struct StaticSwitchNode : ShaderEditorResource::Node {
 		const Input input1 = getInput(m_resource, m_id, 1);
 		if (input1) {
 			input1.node->generateOnce(blob);
-			blob << getOutputTypeName() << " v" << m_id << " = "; 
+			blob << getOutputTypeName() << " v" << m_id << " = "; \
 			input1.printReference(blob);
 			blob << ";\n";
 		}
 		blob << "#endif\n";
+		return true;
 	}
 	
 	ShaderEditorResource::ValueType getOutputType(int) const override {
@@ -1546,7 +1725,7 @@ struct ParameterNode : ShaderEditorResource::Node {
 		return res;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		switch(Type) {
 			case NodeType::SCALAR_PARAM: blob << "\tfloat v"; break;
 			case NodeType::VEC4_PARAM: blob << "\tvec4 v"; break;
@@ -1557,6 +1736,7 @@ struct ParameterNode : ShaderEditorResource::Node {
 		Shader::toUniformVarName(Span(var_name), m_name.c_str());
 
 		blob << m_id << " = " << var_name << ";";
+		return true;
 	}
 
 	String m_name;
@@ -1571,9 +1751,11 @@ struct PinNode : ShaderEditorResource::Node {
 	bool hasInputPins() const override { return true; }
 	bool hasOutputPins() const override { return true; }
 	
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input input = getInput(m_resource, m_id, 0);
-		if (input) input.node->generateOnce(blob);
+		if (!input) return error("Missing input");
+		input.node->generateOnce(blob);
+		return true;
 	}
 
 	void printReference(OutputMemoryStream& blob, int output_idx) const override {
@@ -1665,14 +1847,20 @@ struct PBRNode : ShaderEditorResource::Node
 		return "float";
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		blob << "import \"pipelines/surface_base.inc\"\n\n";
 	
 		IAllocator& allocator = m_resource.m_allocator;
 		Array<String> uniforms(allocator);
 		Array<String> defines(allocator);
 		Array<String> textures(allocator);
+		Array<ShaderEditorResource*> functions(allocator);
 	
+		auto add_function = [&](FunctionCallNode* n){
+			const i32 idx = functions.indexOf(n->m_function_resource);
+			if (idx < 0) functions.push(n->m_function_resource);
+		};
+
 		auto add_uniform = [&](auto* n, const char* type) {
 			const i32 idx = uniforms.find([&](const String& u) { return u == n->m_name; });
 			if (idx < 0) {
@@ -1712,6 +1900,9 @@ struct PBRNode : ShaderEditorResource::Node
 				case NodeType::COLOR_PARAM:
 					add_uniform((ParameterNode<NodeType::COLOR_PARAM>*)n, "color");
 					break;
+				case NodeType::FUNCTION_CALL:
+					add_function((FunctionCallNode*)n);
+					break;
 				case NodeType::STATIC_SWITCH:
 					add_define((StaticSwitchNode*)n);
 					break;
@@ -1745,11 +1936,30 @@ struct PBRNode : ShaderEditorResource::Node
 					pos = pos * 2 - 1;
 					gl_Position = Pass.projection * ((Pass.view * u_model * vec4(i_)#" << m_attributes_names[0].c_str() << R"#(.xyz, 1)) + vec4(pos.xy, 0, 0));
 				]],
+
 				fragment_preface = [[
+				)#";
+			// TODO vertex shader functions
+			for (ShaderEditorResource* f : functions) {
+				f->clearGeneratedFlags();
+				String s = f->generate();
+				blob << s.c_str() << "\n\n";
+			}
+			blob << R"#(
 					layout (location = 0) in vec2 v_uv;
 				]],
 			)#";
 		}
+		else {
+			blob << "fragment_preface = [[\n";
+			for (ShaderEditorResource* f : functions) {
+				f->clearGeneratedFlags();
+				String s = f->generate();
+				blob << s.c_str() << "\n\n";
+			}
+			blob << "]],\n\n";
+		}
+
 
 		blob << "fragment = [[\n";
 	
@@ -1839,6 +2049,7 @@ struct PBRNode : ShaderEditorResource::Node
 
 		if (need_local_position) blob << ",\nneed_local_position = true\n";
 		blob << "})\n";
+		return true;
 	}
 
 	bool onGUI() override {
@@ -1861,9 +2072,9 @@ struct PBRNode : ShaderEditorResource::Node
 			m_show_fs = true;
 		}
 
-		FileSelector& fs = m_resource.m_app.getFileSelector();
+		FileSelector& fs = m_resource.m_editor.m_app.getFileSelector();
 		if (fs.gui("Select particle", &m_show_fs, "par", false)) {
-			m_vertex_decl = ParticleEditor::getVertexDecl(fs.getPath(), m_attributes_names, m_resource.m_app);
+			m_vertex_decl = ParticleEditor::getVertexDecl(fs.getPath(), m_attributes_names, m_resource.m_editor.m_app);
 			if (m_vertex_decl.attributes_count < 1 || m_vertex_decl.attributes[0].components_count != 3) {
 				logError("First particle shader input must be position (have 3 components)");
 			}
@@ -1908,10 +2119,10 @@ struct BackfaceSwitchNode : ShaderEditorResource::Node {
 		return ShaderEditorResource::ValueType::FLOAT;
 	}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input inputA = getInput(m_resource, m_id, 0);
 		const Input inputB = getInput(m_resource, m_id, 1);
-		if (!inputA && !inputB) return;
+		if (!inputA && !inputB) return error("Missing inputs");
 		
 		blob << "\t\t" << toString(getOutputType(0)) << " v" << m_id << ";\n";
 		if (inputA) {
@@ -1928,6 +2139,7 @@ struct BackfaceSwitchNode : ShaderEditorResource::Node {
 					inputB.printReference(blob);
 					blob << ";\n\t}\n";
 		}
+		return true;
 	}
 
 	bool onGUI() override {
@@ -1951,14 +2163,14 @@ struct IfNode : ShaderEditorResource::Node {
 	void serialize(OutputMemoryStream& blob) override {}
 	void deserialize(InputMemoryStream& blob) override {}
 
-	void generate(OutputMemoryStream& blob) override {
+	bool generate(OutputMemoryStream& blob) override {
 		const Input inputA = getInput(m_resource, m_id, 0);
 		const Input inputB = getInput(m_resource, m_id, 1);
 		const Input inputGT = getInput(m_resource, m_id, 2);
 		const Input inputEQ = getInput(m_resource, m_id, 3);
 		const Input inputLT = getInput(m_resource, m_id, 4);
-		if (!inputA || !inputB) return;
-		if (!inputGT && !inputEQ && !inputLT) return;
+		if (!inputA || !inputB) return error("Missing input");
+		if (!inputGT && !inputEQ && !inputLT) return error("Missing input");
 		
 		inputA.node->generateOnce(blob);
 		inputB.node->generateOnce(blob);
@@ -2003,6 +2215,7 @@ struct IfNode : ShaderEditorResource::Node {
 			blob << ";\n";
 			blob << "\t\t}\n";
 		}
+		return true;
 	}
 
 	bool onGUI() override {
@@ -2138,15 +2351,16 @@ void ShaderEditor::onBeforeSettingsSaved() {
 }
 
 ShaderEditor::ShaderEditor(StudioApp& app)
-	: m_allocator(app.getAllocator())
+	: NodeEditor(app.getAllocator())
+	, m_allocator(app.getAllocator())
 	, m_app(app)
 	, m_source(app.getAllocator())
 	, m_is_focused(false)
 	, m_is_open(false)
-	, NodeEditor(app.getAllocator())
+	, m_functions(app.getAllocator())
 	, m_recent_paths("shader_editor_recent_", 10, app)
 {
-	newGraph(false);
+	newGraph(ShaderResourceEditorType::SURFACE);
 	m_save_action.init(ICON_FA_SAVE "Save", "Shader editor save", "shader_editor_save", ICON_FA_SAVE, os::Keycode::S, Action::Modifiers::CTRL, true);
 	m_save_action.func.bind<&ShaderEditor::save>(this);
 	m_save_action.plugin = this;
@@ -2154,7 +2368,6 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_generate_action.init("Generate shader", "Shader editor generate", "shader_editor_generate", ICON_FA_CHECK, os::Keycode::E, Action::Modifiers::CTRL, true);
 	m_generate_action.func.bind<&ShaderEditor::generateAndSaveSource>(this);
 	m_generate_action.plugin = this;
-
 
 	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
 	m_undo_action.func.bind<&ShaderEditor::undo>((SimpleUndoRedo*)this);
@@ -2178,6 +2391,10 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	m_app.addAction(&m_undo_action);
 	m_app.addAction(&m_redo_action);
 	m_app.addAction(&m_delete_action);
+
+	
+	FileSystem& fs = m_app.getEngine().getFileSystem();
+	scanFunctions("");
 }
 
 void ShaderEditor::deleteSelectedNodes() {
@@ -2217,8 +2434,28 @@ void ShaderEditorResource::deleteSelectedNodes() {
 	}
 }
 
-bool ShaderEditorResource::isParticleShader() const {
-	return ((PBRNode*)m_nodes[0])->m_type == PBRNode::Type::PARTICLES;
+ShaderEditorResource::ValueType ShaderEditorResource::getFunctionOutputType() const {
+	for (const Node* n : m_nodes) {
+		if (n->getType() == NodeType::FUNCTION_OUTPUT) {
+			const Input input = getInput(*this, n->m_id, 0);
+			if (!input) return ShaderEditorResource::ValueType::NONE;
+
+			return input.node->getOutputType(input.output_idx);
+		}
+	}
+	ASSERT(false);
+	return ShaderEditorResource::ValueType::NONE;
+}
+
+ShaderResourceEditorType ShaderEditorResource::getShaderType() const {
+	
+	switch (m_nodes[0]->getType()) {
+		case NodeType::PBR: return ((PBRNode*)m_nodes[0])->m_type == PBRNode::Type::PARTICLES 
+			? ShaderResourceEditorType::PARTICLE 
+			: ShaderResourceEditorType::SURFACE;
+		case NodeType::FUNCTION_OUTPUT: return ShaderResourceEditorType::FUNCTION;
+		default: ASSERT(false); return ShaderResourceEditorType::SURFACE;
+	}
 }
 
 void ShaderEditorResource::markReachable(Node* node) const {
@@ -2265,7 +2502,7 @@ void ShaderEditorResource::markReachableNodes() const {
 }
 
 void ShaderEditor::saveSource() {
-	PathInfo fi(m_path.c_str());
+	PathInfo fi(m_resource->m_path.c_str());
 	StaticString<LUMIX_MAX_PATH> path(fi.m_dir, fi.m_basename, ".shd");
 	os::OutputFile file;
 	if (!file.open(path)) {
@@ -2286,6 +2523,11 @@ void ShaderEditor::generateAndSaveSource() {
 	saveSource();
 }
 
+void ShaderEditorResource::clearGeneratedFlags() {
+	for (Node* n : m_nodes) n->m_generated = false;
+}
+
+
 String ShaderEditorResource::generate() {
 	markReachableNodes();
 	colorLinks();
@@ -2293,6 +2535,7 @@ String ShaderEditorResource::generate() {
 	OutputMemoryStream blob(m_allocator);
 	blob.reserve(32 * 1024);
 
+	for (Node* n : m_nodes) n->m_error = "";
 	m_nodes[0]->generateOnce(blob);
 
 	String res(m_allocator);
@@ -2314,6 +2557,7 @@ void ShaderEditorResource::serializeNode(OutputMemoryStream& blob, Node& node)
 }
 
 void ShaderEditor::saveAs(const char* path) {
+	// TODO update shaders using a function when the function is changed
 	os::OutputFile file;
 	FileSystem& fs = m_app.getEngine().getFileSystem();
 	
@@ -2325,7 +2569,7 @@ void ShaderEditor::saveAs(const char* path) {
 	}
 
 	m_recent_paths.push(path);
-	m_path = path;
+	m_resource->m_path = path;
 }
 
 void ShaderEditorResource::serialize(OutputMemoryStream& blob) {
@@ -2353,7 +2597,7 @@ void ShaderEditorResource::serialize(OutputMemoryStream& blob) {
 
 void ShaderEditor::clear() {
 	LUMIX_DELETE(m_allocator, m_resource);
-	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_app);
+	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(*this);
 	clearUndoStack();
 }
 
@@ -2380,6 +2624,9 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 		case NodeType::BACKFACE_SWITCH:				return LUMIX_NEW(m_allocator, BackfaceSwitchNode)(*this);
 		case NodeType::IF:							return LUMIX_NEW(m_allocator, IfNode)(*this);
 		case NodeType::STATIC_SWITCH:				return LUMIX_NEW(m_allocator, StaticSwitchNode)(*this, m_allocator);
+		case NodeType::FUNCTION_INPUT:				return LUMIX_NEW(m_allocator, FunctionInputNode)(*this, m_allocator);
+		case NodeType::FUNCTION_OUTPUT:				return LUMIX_NEW(m_allocator, FunctionOutputNode)(*this);
+		case NodeType::FUNCTION_CALL:				return LUMIX_NEW(m_allocator, FunctionCallNode)(*this);
 		case NodeType::ONEMINUS:					return LUMIX_NEW(m_allocator, OneMinusNode)(*this);
 		case NodeType::CODE:						return LUMIX_NEW(m_allocator, CodeNode)(*this, m_allocator);
 		case NodeType::APPEND:						return LUMIX_NEW(m_allocator, AppendNode)(*this);
@@ -2392,34 +2639,34 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 		case NodeType::VEC4_PARAM:					return LUMIX_NEW(m_allocator, ParameterNode<NodeType::VEC4_PARAM>)(*this, m_allocator);
 		case NodeType::MIX:							return LUMIX_NEW(m_allocator, MixNode)(*this);
 		
-		case NodeType::ABS:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ABS>)(*this);
-		case NodeType::ALL:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ALL>)(*this);
-		case NodeType::ANY:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ANY>)(*this);
-		case NodeType::CEIL:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::CEIL>)(*this);
-		case NodeType::COS:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::COS>)(*this);
-		case NodeType::EXP:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::EXP>)(*this);
-		case NodeType::EXP2:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::EXP2>)(*this);
-		case NodeType::FLOOR:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::FLOOR>)(*this);
-		case NodeType::FRACT:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::FRACT>)(*this);
-		case NodeType::LOG:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::LOG>)(*this);
-		case NodeType::LOG2:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::LOG2>)(*this);
-		case NodeType::NORMALIZE:					return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::NORMALIZE>)(*this);
-		case NodeType::NOT:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::NOT>)(*this);
-		case NodeType::ROUND:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::ROUND>)(*this);
-		case NodeType::SATURATE:					return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::SATURATE>)(*this);
-		case NodeType::SIN:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::SIN>)(*this);
-		case NodeType::SQRT:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::SQRT>)(*this);
-		case NodeType::TAN:							return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TAN>)(*this);
-		case NodeType::TRANSPOSE:					return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TRANSPOSE>)(*this);
-		case NodeType::TRUNC:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::TRUNC>)(*this);
-		case NodeType::LENGTH:						return LUMIX_NEW(m_allocator, FunctionCallNode<NodeType::LENGTH>)(*this);
+		case NodeType::ABS:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::ABS>)(*this);
+		case NodeType::ALL:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::ALL>)(*this);
+		case NodeType::ANY:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::ANY>)(*this);
+		case NodeType::CEIL:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::CEIL>)(*this);
+		case NodeType::COS:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::COS>)(*this);
+		case NodeType::EXP:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::EXP>)(*this);
+		case NodeType::EXP2:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::EXP2>)(*this);
+		case NodeType::FLOOR:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::FLOOR>)(*this);
+		case NodeType::FRACT:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::FRACT>)(*this);
+		case NodeType::LOG:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::LOG>)(*this);
+		case NodeType::LOG2:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::LOG2>)(*this);
+		case NodeType::NORMALIZE:					return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::NORMALIZE>)(*this);
+		case NodeType::NOT:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::NOT>)(*this);
+		case NodeType::ROUND:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::ROUND>)(*this);
+		case NodeType::SATURATE:					return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::SATURATE>)(*this);
+		case NodeType::SIN:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::SIN>)(*this);
+		case NodeType::SQRT:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::SQRT>)(*this);
+		case NodeType::TAN:							return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::TAN>)(*this);
+		case NodeType::TRANSPOSE:					return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::TRANSPOSE>)(*this);
+		case NodeType::TRUNC:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::TRUNC>)(*this);
+		case NodeType::LENGTH:						return LUMIX_NEW(m_allocator, BuiltinFunctionCallNode<NodeType::LENGTH>)(*this);
 
-		case NodeType::DOT:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::DOT>)(*this);
-		case NodeType::CROSS:						return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::CROSS>)(*this);
-		case NodeType::MIN:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MIN>)(*this);
-		case NodeType::MAX:							return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::MAX>)(*this);
+		case NodeType::DOT:							return LUMIX_NEW(m_allocator, BinaryBuiltinFunctionCallNode<NodeType::DOT>)(*this);
+		case NodeType::CROSS:						return LUMIX_NEW(m_allocator, BinaryBuiltinFunctionCallNode<NodeType::CROSS>)(*this);
+		case NodeType::MIN:							return LUMIX_NEW(m_allocator, BinaryBuiltinFunctionCallNode<NodeType::MIN>)(*this);
+		case NodeType::MAX:							return LUMIX_NEW(m_allocator, BinaryBuiltinFunctionCallNode<NodeType::MAX>)(*this);
 		case NodeType::POW:							return LUMIX_NEW(m_allocator, PowerNode)(*this);
-		case NodeType::DISTANCE:					return LUMIX_NEW(m_allocator, BinaryFunctionCallNode<NodeType::DISTANCE>)(*this);
+		case NodeType::DISTANCE:					return LUMIX_NEW(m_allocator, BinaryBuiltinFunctionCallNode<NodeType::DISTANCE>)(*this);
 	}
 
 	ASSERT(false);
@@ -2441,8 +2688,6 @@ ShaderEditorResource::Node& ShaderEditorResource::deserializeNode(InputMemoryStr
 }
 
 void ShaderEditor::load(const char* path) {
-	m_path = path;
-
 	clear();
 
 	FileSystem& fs = m_app.getEngine().getFileSystem();
@@ -2454,6 +2699,7 @@ void ShaderEditor::load(const char* path) {
 
 	InputMemoryStream blob(data);
 	m_resource->deserialize(blob);
+	m_resource->m_path = path;
 
 	clearUndoStack();
 	pushUndo(NO_MERGE_UNDO);
@@ -2575,15 +2821,37 @@ void ShaderEditor::onContextMenu(ImVec2 pos) {
 	}
 	else {
 		nodeGroupUI(*this, Span(NODE_TYPES), pos);
-		if (m_resource->isParticleShader()) {
-			if (ImGui::BeginMenu("Particles")) {
-				PBRNode* o = (PBRNode*)m_resource->m_nodes[0];
-				for (const String& a : o->m_attributes_names) {
-					if (ImGui::MenuItem(a.c_str())) {
-						
-					}
+		
+		if (ImGui::BeginMenu("Functions")) {
+			for (const auto& fn : m_functions) {
+				const StaticString<LUMIX_MAX_PATH> name(Path::getBasename(fn->m_path.c_str()));
+				if (ImGui::MenuItem(name)) {
+					FunctionCallNode* node = (FunctionCallNode*)addNode(NodeType::FUNCTION_CALL, pos, false);
+					node->m_function_resource = fn.get();
+					pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
 				}
-				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+		
+		switch (m_resource->getShaderType()) {
+			case ShaderResourceEditorType::SURFACE: break;
+			case ShaderResourceEditorType::FUNCTION: 
+				if (ImGui::MenuItem("Function input")) {
+					addNode(NodeType::FUNCTION_INPUT, pos, true);
+				}
+				break;
+			case ShaderResourceEditorType::PARTICLE: {
+				if (ImGui::BeginMenu("Particles")) {
+					PBRNode* o = (PBRNode*)m_resource->m_nodes[0];
+					for (const String& a : o->m_attributes_names) {
+						if (ImGui::MenuItem(a.c_str())) {
+						
+						}
+					}
+					ImGui::EndMenu();
+				}
+				break;
 			}
 		}
 	}
@@ -2600,7 +2868,7 @@ void ShaderEditor::serialize(OutputMemoryStream& blob) {
 
 void ShaderEditor::deserialize(InputMemoryStream& blob) {
 	LUMIX_DELETE(m_allocator, m_resource);
-	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(m_app);
+	m_resource = LUMIX_NEW(m_allocator, ShaderEditorResource)(*this);
 	m_resource->deserialize(blob);
 }
 
@@ -2615,9 +2883,9 @@ void ShaderEditorResource::destroyNode(Node* node) {
 	m_nodes.eraseItem(node);
 }
 
-ShaderEditorResource::ShaderEditorResource(StudioApp& app)
-	: m_app(app)
-	, m_allocator(app.getAllocator())
+ShaderEditorResource::ShaderEditorResource(ShaderEditor& editor)
+	: m_editor(editor)
+	, m_allocator(editor.getAllocator())
 	, m_links(m_allocator)
 	, m_nodes(m_allocator)
 {}
@@ -2628,36 +2896,49 @@ ShaderEditorResource::~ShaderEditorResource() {
 	}
 }
 
-void ShaderEditor::newGraph(bool is_particle_shader) {
+void ShaderEditor::newGraph(ShaderResourceEditorType type) {
 	clear();
-
-	m_path = "";
 	
-	PBRNode* output = LUMIX_NEW(m_allocator, PBRNode)(*m_resource);
-	output->m_type = is_particle_shader ? PBRNode::Type::PARTICLES : PBRNode::Type::SURFACE;
-	m_resource->m_nodes.push(output);
-	output->m_pos.x = 50;
-	output->m_pos.y = 50;
-	output->m_id = ++m_resource->m_last_node_id;
+	Node* node = nullptr;
+	switch(type) {
+		case ShaderResourceEditorType::PARTICLE:
+		case ShaderResourceEditorType::SURFACE: {
+			PBRNode* output = LUMIX_NEW(m_allocator, PBRNode)(*m_resource);
+			output->m_type = (type == ShaderResourceEditorType::PARTICLE) ? PBRNode::Type::PARTICLES : PBRNode::Type::SURFACE;
+			node = output;
+			break;
+		}
+		case ShaderResourceEditorType::FUNCTION: {
+			node = LUMIX_NEW(m_allocator, FunctionOutputNode)(*m_resource);
+			break;
+		}
+	}
+	if (node) {
+		m_resource->m_nodes.push(node);
+		node->m_pos.x = 50;
+		node->m_pos.y = 50;
+		node->m_id = ++m_resource->m_last_node_id;
+	}
 
 	clearUndoStack();
 	pushUndo(NO_MERGE_UNDO);
 }
 
 void ShaderEditor::save() {
-	if (m_path.isEmpty()) m_show_save_as = true;
-	else saveAs(m_path.c_str());
+	if (m_resource->m_path.isEmpty()) m_show_save_as = true;
+	else saveAs(m_resource->m_path.c_str());
 }
 
 void ShaderEditor::onGUIMenu() {
 	if(ImGui::BeginMenuBar()) {
 		if(ImGui::BeginMenu("File")) {
 			if (ImGui::BeginMenu("New")) {
-				if (ImGui::MenuItem("Particles")) newGraph(true);
-				if (ImGui::MenuItem("Surface")) newGraph(false);
+				if (ImGui::MenuItem("Function")) newGraph(ShaderResourceEditorType::FUNCTION);
+				if (ImGui::MenuItem("Particles")) newGraph(ShaderResourceEditorType::PARTICLE);
+				if (ImGui::MenuItem("Surface")) newGraph(ShaderResourceEditorType::SURFACE);
 				ImGui::EndMenu();
 			}
-			menuItem(m_generate_action, !m_path.isEmpty());
+			menuItem(m_generate_action, !m_resource->m_path.isEmpty());
 			ImGui::MenuItem("View source", nullptr, &m_source_open);
 			if (ImGui::MenuItem("Open")) m_show_open = true;
 			menuItem(m_save_action, true);
@@ -2699,6 +2980,37 @@ void ShaderEditor::deleteUnreachable() {
 	pushUndo(NO_MERGE_UNDO);
 }
 
+void ShaderEditor::scanFunctions(const char* dir) {
+	// TODO merge with other file iterators, e.g. with asset compiler iterator
+	FileSystem& fs = m_app.getEngine().getFileSystem();
+	os::FileIterator* iter = fs.createFileIterator(dir);
+	os::FileInfo info;
+	while (os::getNextFile(iter, &info)) {
+		if (info.filename[0] == '.') continue;
+		if (info.is_directory) {
+			Path subdir(dir, info.filename, "/");
+			scanFunctions(subdir);
+			continue;
+		}
+
+		if (!Path::hasExtension(info.filename, "sed")) continue;
+
+		UniquePtr<ShaderEditorResource> res = UniquePtr<ShaderEditorResource>::create(m_allocator, *this);
+		OutputMemoryStream data(m_allocator);
+		const Path path(dir, info.filename);
+		if (!fs.getContentSync(Path(path), data)) {
+			logError("Failed to load ", path);
+			continue;
+		}
+
+		InputMemoryStream blob(data);
+		res->deserialize(blob);
+		res->m_path = path;
+		if (res->getShaderType() == ShaderResourceEditorType::FUNCTION) m_functions.emplace(res.move());
+	}
+	os::destroyFileIterator(iter);
+}
+
 void ShaderEditor::onWindowGUI()
 {
 	if (m_source_open) {
@@ -2718,7 +3030,7 @@ void ShaderEditor::onWindowGUI()
 	if (!m_is_open) return;
 
 	StaticString<LUMIX_MAX_PATH + 25> title("Shader Editor");
-	if (!m_path.isEmpty()) title.append(" - ", m_path.c_str());
+	if (!m_resource->m_path.isEmpty()) title.append(" - ", m_resource->m_path.c_str());
 	title.add("###Shader Editor");
 
 	ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);

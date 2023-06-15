@@ -18,6 +18,11 @@ struct InputMemoryStream;
 struct OutputMemoryStream;
 enum class NodeType;
 
+enum class ShaderResourceEditorType : u32 {
+	SURFACE,
+	PARTICLE,
+	FUNCTION
+};
 
 struct ShaderEditorResource {
 	using Link = NodeEditorLink;
@@ -59,13 +64,15 @@ struct ShaderEditorResource {
 		u32 m_output_count = 0;
 
 		ShaderEditorResource& m_resource;
+		String m_error;
 
 	protected:
-		virtual void generate(OutputMemoryStream& blob) {}
+		virtual bool generate(OutputMemoryStream& blob) { return true; }
 		virtual bool onGUI() = 0;
+		bool error(const char* msg) { m_error = msg; return false; }
 	};
 
-	ShaderEditorResource(StudioApp& app);
+	ShaderEditorResource(struct ShaderEditor& editor);
 	~ShaderEditorResource();
 
 	Node* createNode(int type);
@@ -82,13 +89,16 @@ struct ShaderEditorResource {
 	bool deserialize(InputMemoryStream& blob);
 	void deleteUnreachable();
 	String generate();
-	bool isParticleShader() const;
+	void clearGeneratedFlags();
+	ShaderResourceEditorType getShaderType() const;
+	ValueType getFunctionOutputType() const;
 
-	StudioApp& m_app;
+	ShaderEditor& m_editor;
 	IAllocator& m_allocator;
 	Array<Link> m_links;
 	Array<Node*> m_nodes;
 	int m_last_node_id = 0;
+	Path m_path;
 };
 
 struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor {
@@ -104,9 +114,11 @@ struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor {
 	void pushUndo(u32 tag) override;
 	ShaderEditorResource::Node* addNode(NodeType node_type, ImVec2 pos, bool save_undo);
 	ShaderEditorResource* getResource() { return m_resource; }
+	const Array<UniquePtr<ShaderEditorResource>>& getFunctions() { return m_functions; }
 
 	static const int MAX_TEXTURES_COUNT = 16;
 	bool m_is_open;
+	StudioApp& m_app;
 
 private:
 	const char* getName() const override { return "shader_editor"; }
@@ -117,10 +129,11 @@ private:
 	
 	void saveSource();
 	void generateAndSaveSource();
-	void newGraph(bool is_particle_shader);
+	void newGraph(ShaderResourceEditorType type);
 	void saveAs(const char* path);
 	void save();
 	void load(const char* path);
+	void scanFunctions(const char* dir);
 
 	void deserialize(InputMemoryStream& blob) override;
 	void serialize(OutputMemoryStream& blob) override;
@@ -135,10 +148,8 @@ private:
 	void deleteSelectedNodes();
 	void deleteUnreachable();
 
-	StudioApp& m_app;
 	IAllocator& m_allocator;
 	ImVec2 m_canvas_offset = ImVec2(0, 0);
-	Path m_path;
 	bool m_is_focused;
 	String m_source;
 	Action m_save_action;
@@ -152,6 +163,7 @@ private:
 	RecentPaths m_recent_paths;
 	bool m_show_save_as = false;
 	bool m_show_open = false;
+	Array<UniquePtr<ShaderEditorResource>> m_functions;
 
 	ShaderEditorResource* m_resource = nullptr;
 };
