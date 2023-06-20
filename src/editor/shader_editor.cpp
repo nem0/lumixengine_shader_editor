@@ -95,7 +95,9 @@ enum class NodeType {
 
 	FUNCTION_INPUT,
 	FUNCTION_OUTPUT,
-	FUNCTION_CALL
+	FUNCTION_CALL,
+
+	PARTICLE_STREAM
 };
 
 struct VertexOutput {
@@ -103,51 +105,44 @@ struct VertexOutput {
 	StaticString<32> name;
 };
 
-static constexpr ShaderEditorResource::ValueType semanticToType(Mesh::AttributeSemantic semantic) {
-	switch (semantic) {
-		case Mesh::AttributeSemantic::POSITION: return ShaderEditorResource::ValueType::VEC3;
-		case Mesh::AttributeSemantic::COLOR0: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::COLOR1: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::INDICES: return ShaderEditorResource::ValueType::IVEC4;
-		case Mesh::AttributeSemantic::WEIGHTS: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::NORMAL: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::TANGENT: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::BITANGENT: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::TEXCOORD0: return ShaderEditorResource::ValueType::VEC2;
-		case Mesh::AttributeSemantic::TEXCOORD1: return ShaderEditorResource::ValueType::VEC2;
-		case Mesh::AttributeSemantic::INSTANCE0: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::INSTANCE1: return ShaderEditorResource::ValueType::VEC4;
-		case Mesh::AttributeSemantic::INSTANCE2: return ShaderEditorResource::ValueType::VEC4;
-		default: ASSERT(false); return ShaderEditorResource::ValueType::VEC4;
+static ShaderEditorResource::ValueType toType(const gpu::Attribute& attr) {
+	switch (attr.type) {
+		case gpu::AttributeType::FLOAT:
+			break;
+		case gpu::AttributeType::I16:
+		case gpu::AttributeType::I8:
+			if (attr.flags & gpu::Attribute::AS_INT) {
+				switch (attr.components_count) {
+					case 1: return ShaderEditorResource::ValueType::INT;
+					case 2: ASSERT(false); break;
+					case 3: ASSERT(false); break;
+					case 4: return ShaderEditorResource::ValueType::IVEC4;
+				}
+				ASSERT(false);
+				return ShaderEditorResource::ValueType::NONE;
+			}
+			break;
+		case gpu::AttributeType::U8:
+			if (attr.flags & gpu::Attribute::AS_INT) {
+				switch (attr.components_count) {
+					case 1: ASSERT(false); break;
+					case 2: ASSERT(false); break;
+					case 3: ASSERT(false); break;
+					case 4: ASSERT(false); break;
+				}
+				ASSERT(false);
+				return ShaderEditorResource::ValueType::NONE;
+			}
+			break;
 	}
-}
-
-static constexpr const char* toString(Mesh::AttributeSemantic sem) {
-
-	struct {
-		Mesh::AttributeSemantic semantic;
-		const char* name;
-	} table[] = {
-		{ Mesh::AttributeSemantic::POSITION, "position" },
-		{ Mesh::AttributeSemantic::NORMAL, "normal" },
-		{ Mesh::AttributeSemantic::TANGENT, "tangent" },
-		{ Mesh::AttributeSemantic::BITANGENT, "bitangent" },
-		{ Mesh::AttributeSemantic::COLOR0, "color 0" },
-		{ Mesh::AttributeSemantic::COLOR1, "color 1" },
-		{ Mesh::AttributeSemantic::INDICES, "indices" },
-		{ Mesh::AttributeSemantic::WEIGHTS, "weights" },
-		{ Mesh::AttributeSemantic::TEXCOORD0, "tex coord 0" },
-		{ Mesh::AttributeSemantic::TEXCOORD1, "tex coord 1" },
-		{ Mesh::AttributeSemantic::INSTANCE0, "instance 0" },
-		{ Mesh::AttributeSemantic::INSTANCE1, "instance 1" },
-		{ Mesh::AttributeSemantic::INSTANCE2, "instance 2" }
-	};
-
-	for (const auto& i : table) {
-		if (i.semantic == sem) return i.name;
+	switch (attr.components_count) {
+		case 1: return ShaderEditorResource::ValueType::FLOAT;
+		case 2: return ShaderEditorResource::ValueType::VEC2;
+		case 3: return ShaderEditorResource::ValueType::VEC3;
+		case 4: return ShaderEditorResource::ValueType::VEC4;
 	}
 	ASSERT(false);
-	return "Unknown";
+	return ShaderEditorResource::ValueType::NONE;
 }
 
 static constexpr const char* toString(ShaderEditorResource::ValueType type) {
@@ -1847,210 +1842,7 @@ struct PBRNode : ShaderEditorResource::Node
 		return "float";
 	}
 
-	bool generate(OutputMemoryStream& blob) override {
-		blob << "import \"pipelines/surface_base.inc\"\n\n";
-	
-		IAllocator& allocator = m_resource.m_allocator;
-		Array<String> uniforms(allocator);
-		Array<String> defines(allocator);
-		Array<String> textures(allocator);
-		Array<ShaderEditorResource*> functions(allocator);
-	
-		auto add_function = [&](FunctionCallNode* n){
-			const i32 idx = functions.indexOf(n->m_function_resource);
-			if (idx < 0) functions.push(n->m_function_resource);
-		};
-
-		auto add_uniform = [&](auto* n, const char* type) {
-			const i32 idx = uniforms.find([&](const String& u) { return u == n->m_name; });
-			if (idx < 0) {
-				uniforms.emplace(n->m_name.c_str(), allocator);
-				blob << "uniform(\"" << n->m_name.c_str() << "\", \"" << type << "\")\n";
-			}
-		};
-	
-		auto add_define = [&](StaticSwitchNode* n){
-			const i32 idx = defines.find([&](const String& u) { return u == n->m_define; });
-			if (idx < 0) {
-				defines.emplace(n->m_define.c_str(), allocator);
-				blob << "define(\"" << n->m_define.c_str() << "\")\n";
-			}
-		};
-	
-		auto add_texture = [&](SampleNode* n){
-			const i32 idx = textures.find([&](const String& u) { return u == n->m_texture; });
-			if (idx < 0) {
-				textures.emplace(n->m_texture.c_str(), allocator);
-				blob << "{\n"
-					<< "\tname = \"" << n->m_texture.c_str() << "\",\n"
-					<< "\tdefault_texture = \"textures/common/white.tga\"\n"
-					<< "}\n";
-			}
-		};
-	
-		for (Node* n : m_resource.m_nodes) {
-			if (!n->m_reachable) continue;
-			switch(n->getType()) {
-				case NodeType::SCALAR_PARAM:
-					add_uniform((ParameterNode<NodeType::SCALAR_PARAM>*)n, "float");
-					break;
-				case NodeType::VEC4_PARAM:
-					add_uniform((ParameterNode<NodeType::VEC4_PARAM>*)n, "vec4");
-					break;
-				case NodeType::COLOR_PARAM:
-					add_uniform((ParameterNode<NodeType::COLOR_PARAM>*)n, "color");
-					break;
-				case NodeType::FUNCTION_CALL:
-					add_function((FunctionCallNode*)n);
-					break;
-				case NodeType::STATIC_SWITCH:
-					add_define((StaticSwitchNode*)n);
-					break;
-				default: break;
-			}
-		}
-	
-		if (m_type == Type::PARTICLES) {
-			blob << "common(\"#define PARTICLES\\n\")\n";
-		}
-
-		blob << "surface_shader_ex({\n";
-		blob << "texture_slots = {\n";
-		for (Node* n : m_resource.m_nodes) {
-			if (!n->m_reachable) continue;
-			if (n->getType() == NodeType::SAMPLE) add_texture((SampleNode*)n);
-		}
-		blob << "},\n";
-	
-		if (m_type == Type::PARTICLES && !m_attributes_names.empty()) {
-			blob << "vertex_preface = [[\n";
-			for (u32 i = 0; i < m_vertex_decl.attributes_count; ++i) {
-				blob << "\tlayout(location = " << i << ") in " << typeToString(m_vertex_decl.attributes[i]) << " i_" << m_attributes_names[i].c_str() << ";\n";
-			}
-			blob << R"#(
-					layout (location = 0) out vec2 v_uv;
-				]],
-				vertex = [[
-					vec2 pos = vec2(gl_VertexID & 1, (gl_VertexID & 2) * 0.5);
-					v_uv = pos;
-					pos = pos * 2 - 1;
-					gl_Position = Pass.projection * ((Pass.view * u_model * vec4(i_)#" << m_attributes_names[0].c_str() << R"#(.xyz, 1)) + vec4(pos.xy, 0, 0));
-				]],
-
-				fragment_preface = [[
-				)#";
-			// TODO vertex shader functions
-			for (ShaderEditorResource* f : functions) {
-				f->clearGeneratedFlags();
-				String s = f->generate();
-				blob << s.c_str() << "\n\n";
-			}
-			blob << R"#(
-					layout (location = 0) in vec2 v_uv;
-				]],
-			)#";
-		}
-		else {
-			blob << "fragment_preface = [[\n";
-			for (ShaderEditorResource* f : functions) {
-				f->clearGeneratedFlags();
-				String s = f->generate();
-				blob << s.c_str() << "\n\n";
-			}
-			blob << "]],\n\n";
-		}
-
-
-		blob << "fragment = [[\n";
-	
-		bool need_local_position = false;
-		for (Node* n : m_resource.m_nodes) {
-			if (n->getType() == NodeType::POSITION) {
-				need_local_position = need_local_position || ((PositionNode*)n)->m_space == PositionNode::LOCAL;
-			}
-			n->m_generated = false;
-		}
-
-		const struct {
-			const char* name;
-			const char* default_value;
-			const char* particle_default = nullptr;
-		}
-		fields[] = { 
-			{ "albedo", "vec3(1, 0, 1)" },
-			{ "N", "v_normal", "vec3(0, 1, 0)" },
-			{ "alpha", "1" }, 
-			{ "roughness", "1" },
-			{ "metallic", "0" },
-			{ "emission", "0" },
-			{ "ao", "1" },
-			{ "translucency", "0" },
-			{ "shadow", "1" }
-		};
-
-		for (const auto& field : fields) {
-			const int i = int(&field - fields);
-			Input input = getInput(m_resource, m_id, i);
-			if (input) {
-				input.node->generateOnce(blob);
-				blob << "\tdata." << field.name << " = ";
-				if (i < 2) blob << "vec3(";
-				input.printReference(blob);
-				const ShaderEditorResource::ValueType type = input.node->getOutputType(input.output_idx);
-				if (i == 0) {
-					switch(type) {
-						case ShaderEditorResource::ValueType::IVEC4:
-						case ShaderEditorResource::ValueType::VEC4:
-							blob << ".rgb"; break;
-						case ShaderEditorResource::ValueType::VEC3:
-							break;
-						case ShaderEditorResource::ValueType::VEC2:
-							blob << ".rgr"; break;
-						case ShaderEditorResource::ValueType::BOOL:
-						case ShaderEditorResource::ValueType::INT:
-						case ShaderEditorResource::ValueType::FLOAT:
-							break;
-						case ShaderEditorResource::ValueType::COUNT:
-						case ShaderEditorResource::ValueType::NONE:
-							// invalid data
-							break;
-					}
-				}
-				else if (type != ShaderEditorResource::ValueType::VEC3 && i < 2) blob << ".rgb";
-				else if (type != ShaderEditorResource::ValueType::FLOAT && i >= 2) blob << ".x";
-				if (i < 2) blob << ")";
-				blob << ";\n";
-			}
-			else {
-				if (m_type == Type::PARTICLES && field.particle_default) {
-					blob << "\tdata." << field.name << " = " << field.particle_default << ";\n";
-				}
-				else {
-					blob << "\tdata." << field.name << " = " << field.default_value << ";\n";
-				}
-			}
-		}
-
-		blob << "\tdata.V = vec3(0);\n";
-		blob << "\tdata.wpos = vec3(0);\n";
-		if (m_is_masked) {
-			blob << "\tif (data.alpha < 0.5) discard;\n";
-		}
-		blob << "]]\n";
-		Input po_input = getInput(m_resource, m_id, lengthOf(fields));
-		if (po_input) {
-			blob << ", vertex [[";
-			po_input.node->generateOnce(blob);
-			blob << "v_wpos += ";
-			po_input.printReference(blob);
-			blob << ";\n";
-			blob << "]]\n";
-		}
-
-		if (need_local_position) blob << ",\nneed_local_position = true\n";
-		blob << "})\n";
-		return true;
-	}
+	bool generate(OutputMemoryStream& blob) override;
 
 	bool onGUI() override {
 		ImGuiEx::NodeTitle(m_type == Type::SURFACE ? "PBR Surface" : "PBR Particles");
@@ -2094,6 +1886,276 @@ struct PBRNode : ShaderEditorResource::Node
 	bool m_show_fs = false;
 	bool m_is_masked = false;
 };
+
+struct ParticleStreamNode : ShaderEditorResource::Node {
+	explicit ParticleStreamNode(ShaderEditorResource& resource)
+		: Node(resource)
+	{}
+
+	NodeType getType() const override { return NodeType::PARTICLE_STREAM; }
+
+	bool hasInputPins() const override { return false; }
+	bool hasOutputPins() const override { return true; }
+	
+	void serialize(OutputMemoryStream& blob) override { blob.write(m_stream); }
+	void deserialize(InputMemoryStream& blob) override { blob.read(m_stream); }
+
+	ShaderEditorResource::ValueType getOutputType(int idx) const override {
+		const Node* n = m_resource.m_nodes[0];
+		ASSERT(n->getType() == NodeType::PBR);
+		const PBRNode* pbr = (const PBRNode*)n;
+		if (m_stream >= pbr->m_vertex_decl.attributes_count) return ShaderEditorResource::ValueType::FLOAT;
+		return toType(pbr->m_vertex_decl.attributes[m_stream]);
+	}
+
+	bool generate(OutputMemoryStream& blob) override { return true; }
+
+	void printReference(OutputMemoryStream& blob, int output_idx) const override {
+		const Node* n = m_resource.m_nodes[0];
+		ASSERT(n->getType() == NodeType::PBR);
+		const PBRNode* pbr = (const PBRNode*)n;
+		if (m_stream >= pbr->m_vertex_decl.attributes_count) return;
+		
+		blob << "v_" << pbr->m_attributes_names[m_stream].c_str();
+	}
+
+	bool onGUI() override {
+		ImGuiEx::NodeTitle("Particle stream");
+		outputSlot();
+		const Node* n = m_resource.m_nodes[0];
+		ASSERT(n->getType() == NodeType::PBR);
+		const PBRNode* pbr = (const PBRNode*)n;
+		const char* preview = m_stream < (u32)pbr->m_attributes_names.size() ? pbr->m_attributes_names[m_stream].c_str() : "N/A";
+		ImGui::TextUnformatted(preview);
+		return false;
+	}
+
+	u32 m_stream = 0;
+};
+
+bool PBRNode::generate(OutputMemoryStream& blob) {
+	blob << "import \"pipelines/surface_base.inc\"\n\n";
+	
+	IAllocator& allocator = m_resource.m_allocator;
+	Array<String> uniforms(allocator);
+	Array<String> defines(allocator);
+	Array<String> textures(allocator);
+	Array<u32> particle_streams(allocator);
+	Array<ShaderEditorResource*> functions(allocator);
+	
+	auto add_function = [&](FunctionCallNode* n){
+		const i32 idx = functions.indexOf(n->m_function_resource);
+		if (idx < 0) functions.push(n->m_function_resource);
+	};
+
+	auto add_particle_stream = [&](ParticleStreamNode* n){
+		const i32 idx = particle_streams.indexOf(n->m_stream);
+		if (idx < 0) particle_streams.push(n->m_stream);
+	};
+
+	auto add_uniform = [&](auto* n, const char* type) {
+		const i32 idx = uniforms.find([&](const String& u) { return u == n->m_name; });
+		if (idx < 0) {
+			uniforms.emplace(n->m_name.c_str(), allocator);
+			blob << "uniform(\"" << n->m_name.c_str() << "\", \"" << type << "\")\n";
+		}
+	};
+	
+	auto add_define = [&](StaticSwitchNode* n){
+		const i32 idx = defines.find([&](const String& u) { return u == n->m_define; });
+		if (idx < 0) {
+			defines.emplace(n->m_define.c_str(), allocator);
+			blob << "define(\"" << n->m_define.c_str() << "\")\n";
+		}
+	};
+	
+	auto add_texture = [&](SampleNode* n){
+		const i32 idx = textures.find([&](const String& u) { return u == n->m_texture; });
+		if (idx < 0) {
+			textures.emplace(n->m_texture.c_str(), allocator);
+			blob << "{\n"
+				<< "\tname = \"" << n->m_texture.c_str() << "\",\n"
+				<< "\tdefault_texture = \"textures/common/white.tga\"\n"
+				<< "}\n";
+		}
+	};
+	
+	for (Node* n : m_resource.m_nodes) {
+		if (!n->m_reachable) continue;
+		switch(n->getType()) {
+			case NodeType::PARTICLE_STREAM:
+				add_particle_stream((ParticleStreamNode*)n);
+				break;
+			case NodeType::SCALAR_PARAM:
+				add_uniform((ParameterNode<NodeType::SCALAR_PARAM>*)n, "float");
+				break;
+			case NodeType::VEC4_PARAM:
+				add_uniform((ParameterNode<NodeType::VEC4_PARAM>*)n, "vec4");
+				break;
+			case NodeType::COLOR_PARAM:
+				add_uniform((ParameterNode<NodeType::COLOR_PARAM>*)n, "color");
+				break;
+			case NodeType::FUNCTION_CALL:
+				add_function((FunctionCallNode*)n);
+				break;
+			case NodeType::STATIC_SWITCH:
+				add_define((StaticSwitchNode*)n);
+				break;
+			default: break;
+		}
+	}
+	
+	if (m_type == Type::PARTICLES) {
+		blob << "common(\"#define PARTICLES\\n\")\n";
+	}
+
+	blob << "surface_shader_ex({\n";
+	blob << "texture_slots = {\n";
+	for (Node* n : m_resource.m_nodes) {
+		if (!n->m_reachable) continue;
+		if (n->getType() == NodeType::SAMPLE) add_texture((SampleNode*)n);
+	}
+	blob << "},\n";
+	
+	if (m_type == Type::PARTICLES && !m_attributes_names.empty()) {
+		blob << "vertex_preface = [[\n";
+		for (u32 i : particle_streams) {
+			blob << "\tlayout(location = " << i << ") in " << typeToString(m_vertex_decl.attributes[i]) << " i_" << m_attributes_names[i].c_str() << ";\n";
+			blob << "\tlayout(location = " << i + 1 << ") out " << typeToString(m_vertex_decl.attributes[i]) << " v_" << m_attributes_names[i].c_str() << ";\n";
+		}
+		blob << R"#(
+				layout (location = 0) out vec2 v_uv;
+			]],
+			vertex = [[
+				vec2 pos = vec2(gl_VertexID & 1, (gl_VertexID & 2) * 0.5);
+				v_uv = pos;
+		)#";
+		for (u32 i : particle_streams) {
+			const String& a = m_attributes_names[i];
+			blob << "\t\tv_" << a.c_str() << " = i_" << a.c_str() << ";\n";
+		}
+		blob << R"#(
+				pos = pos * 2 - 1;
+				gl_Position = Pass.projection * ((Pass.view * u_model * vec4(i_)#" << m_attributes_names[0].c_str() << R"#(.xyz, 1)) + vec4(pos.xy, 0, 0));
+			]],
+
+			fragment_preface = [[
+			)#";
+		// TODO vertex shader functions
+		for (ShaderEditorResource* f : functions) {
+			f->clearGeneratedFlags();
+			String s = f->generate();
+			blob << s.c_str() << "\n\n";
+		}
+		for (u32 i : particle_streams) {
+			blob << "\tlayout(location = " << i + 1 << ") in " << typeToString(m_vertex_decl.attributes[i]) << " v_" << m_attributes_names[i].c_str() << ";\n";
+		}
+		blob << R"#(
+				layout (location = 0) in vec2 v_uv;
+			]],
+		)#";
+	}
+	else {
+		blob << "fragment_preface = [[\n";
+		for (ShaderEditorResource* f : functions) {
+			f->clearGeneratedFlags();
+			String s = f->generate();
+			blob << s.c_str() << "\n\n";
+		}
+		blob << "]],\n\n";
+	}
+
+
+	blob << "fragment = [[\n";
+	
+	bool need_local_position = false;
+	for (Node* n : m_resource.m_nodes) {
+		if (n->getType() == NodeType::POSITION) {
+			need_local_position = need_local_position || ((PositionNode*)n)->m_space == PositionNode::LOCAL;
+		}
+		n->m_generated = false;
+	}
+
+	const struct {
+		const char* name;
+		const char* default_value;
+		const char* particle_default = nullptr;
+	}
+	fields[] = { 
+		{ "albedo", "vec3(1, 0, 1)" },
+		{ "N", "v_normal", "vec3(0, 1, 0)" },
+		{ "alpha", "1" }, 
+		{ "roughness", "1" },
+		{ "metallic", "0" },
+		{ "emission", "0" },
+		{ "ao", "1" },
+		{ "translucency", "0" },
+		{ "shadow", "1" }
+	};
+
+	for (const auto& field : fields) {
+		const int i = int(&field - fields);
+		Input input = getInput(m_resource, m_id, i);
+		if (input) {
+			input.node->generateOnce(blob);
+			blob << "\tdata." << field.name << " = ";
+			if (i < 2) blob << "vec3(";
+			input.printReference(blob);
+			const ShaderEditorResource::ValueType type = input.node->getOutputType(input.output_idx);
+			if (i == 0) {
+				switch(type) {
+					case ShaderEditorResource::ValueType::IVEC4:
+					case ShaderEditorResource::ValueType::VEC4:
+						blob << ".rgb"; break;
+					case ShaderEditorResource::ValueType::VEC3:
+						break;
+					case ShaderEditorResource::ValueType::VEC2:
+						blob << ".rgr"; break;
+					case ShaderEditorResource::ValueType::BOOL:
+					case ShaderEditorResource::ValueType::INT:
+					case ShaderEditorResource::ValueType::FLOAT:
+						break;
+					case ShaderEditorResource::ValueType::COUNT:
+					case ShaderEditorResource::ValueType::NONE:
+						// invalid data
+						break;
+				}
+			}
+			else if (type != ShaderEditorResource::ValueType::VEC3 && i < 2) blob << ".rgb";
+			else if (type != ShaderEditorResource::ValueType::FLOAT && i >= 2) blob << ".x";
+			if (i < 2) blob << ")";
+			blob << ";\n";
+		}
+		else {
+			if (m_type == Type::PARTICLES && field.particle_default) {
+				blob << "\tdata." << field.name << " = " << field.particle_default << ";\n";
+			}
+			else {
+				blob << "\tdata." << field.name << " = " << field.default_value << ";\n";
+			}
+		}
+	}
+
+	blob << "\tdata.V = vec3(0);\n";
+	blob << "\tdata.wpos = vec3(0);\n";
+	if (m_is_masked) {
+		blob << "\tif (data.alpha < 0.5) discard;\n";
+	}
+	blob << "]]\n";
+	Input po_input = getInput(m_resource, m_id, lengthOf(fields));
+	if (po_input) {
+		blob << ", vertex [[";
+		po_input.node->generateOnce(blob);
+		blob << "v_wpos += ";
+		po_input.printReference(blob);
+		blob << ";\n";
+		blob << "]]\n";
+	}
+
+	if (need_local_position) blob << ",\nneed_local_position = true\n";
+	blob << "})\n";
+	return true;
+}
 
 struct BackfaceSwitchNode : ShaderEditorResource::Node {
 	explicit BackfaceSwitchNode(ShaderEditorResource& resource)
@@ -2614,6 +2676,7 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 		case NodeType::ADD:							return LUMIX_NEW(m_allocator, OperatorNode<NodeType::ADD>)(*this);
 		case NodeType::DIVIDE:						return LUMIX_NEW(m_allocator, OperatorNode<NodeType::DIVIDE>)(*this);
 		case NodeType::SUBTRACT:					return LUMIX_NEW(m_allocator, OperatorNode<NodeType::SUBTRACT>)(*this);
+		case NodeType::PARTICLE_STREAM:				return LUMIX_NEW(m_allocator, ParticleStreamNode)(*this);
 		case NodeType::SWIZZLE:						return LUMIX_NEW(m_allocator, SwizzleNode)(*this);
 		case NodeType::TIME:						return LUMIX_NEW(m_allocator, UniformNode<NodeType::TIME>)(*this);
 		case NodeType::VIEW_DIR:					return LUMIX_NEW(m_allocator, UniformNode<NodeType::VIEW_DIR>)(*this);
@@ -2846,7 +2909,9 @@ void ShaderEditor::onContextMenu(ImVec2 pos) {
 					PBRNode* o = (PBRNode*)m_resource->m_nodes[0];
 					for (const String& a : o->m_attributes_names) {
 						if (ImGui::MenuItem(a.c_str())) {
-						
+							ParticleStreamNode* node = (ParticleStreamNode*)addNode(NodeType::PARTICLE_STREAM, pos, false);
+							node->m_stream = u32(&a - o->m_attributes_names.begin());
+							pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
 						}
 					}
 					ImGui::EndMenu();
