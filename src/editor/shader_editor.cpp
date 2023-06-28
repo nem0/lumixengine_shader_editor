@@ -162,79 +162,6 @@ static constexpr const char* toString(ShaderEditorResource::ValueType type) {
 	return "Unknown type";
 }
 
-static const struct NodeTypeDesc {
-	char key;
-	const char* group;
-	const char* name;
-	NodeType type;
-} NODE_TYPES[] = {
-	{'T', nullptr, "Sample", NodeType::SAMPLE},
-	{'4', nullptr, "Vector 4", NodeType::VEC4},
-	{'3', nullptr, "Vector 3", NodeType::VEC3},
-	{'2', nullptr, "Vector 2", NodeType::VEC2},
-	{'1', nullptr, "Number", NodeType::NUMBER},
-	
-	{'C',	"Parameters", "Color", NodeType::COLOR_PARAM},
-	{'P',	"Parameters", "Scalar", NodeType::SCALAR_PARAM},
-	{'V',	"Parameters", "Vec4", NodeType::VEC4_PARAM},
-	
-	{0, "Constants", "Time", NodeType::TIME},
-	{0, "Constants", "Vertex ID", NodeType::VERTEX_ID},
-	{0, "Constants", "View direction", NodeType::VIEW_DIR},
-
-	{0,		"Utility", "Fresnel", NodeType::FRESNEL},
-	{0,		"Utility", "Custom code", NodeType::CODE},
-	{0,		"Utility", "Backface switch", NodeType::BACKFACE_SWITCH},
-	{'I',	"Utility", "If", NodeType::IF},
-	{0,		"Utility", "Pixel depth", NodeType::PIXEL_DEPTH},
-	{0,		"Utility", "Scene depth", NodeType::SCENE_DEPTH},
-	{0,		"Utility", "Screen position", NodeType::SCREEN_POSITION},
-	{0,		"Utility", "Static switch", NodeType::STATIC_SWITCH},
-	//{0,		"Utility", "Function input", NodeType::FUNCTION_INPUT}, // manual context menu
-	{'S',	"Utility", "Swizzle", NodeType::SWIZZLE},
-
-	{0,		"Math", "Abs", NodeType::ABS},
-	{0,		"Math", "All", NodeType::ALL},
-	{0,		"Math", "Any", NodeType::ANY},
-	{0,		"Math", "Ceil", NodeType::CEIL},
-	{0,		"Math", "Cos", NodeType::COS},
-	{'E',	"Math", "Exp", NodeType::EXP},
-	{0,		"Math", "Exp2", NodeType::EXP2},
-	{0,		"Math", "Floor", NodeType::FLOOR},
-	{0,		"Math", "Fract", NodeType::FRACT},
-	{0,		"Math", "Log", NodeType::LOG},
-	{0,		"Math", "Log2", NodeType::LOG2},
-	{'N',	"Math", "Normalize", NodeType::NORMALIZE},
-	{0,		"Math", "Not", NodeType::NOT},
-	{0,		"Math", "Round", NodeType::ROUND},
-	{0,		"Math", "Saturate", NodeType::SATURATE},
-	{0,		"Math", "Sin", NodeType::SIN},
-	{0,		"Math", "Sqrt", NodeType::SQRT},
-	{0,		"Math", "Tan", NodeType::TAN},
-	{0,		"Math", "Transpose", NodeType::TRANSPOSE},
-	{0,		"Math", "Trunc", NodeType::TRUNC},
-
-	{0,		"Math", "Cross", NodeType::CROSS},
-	{0,		"Math", "Distance", NodeType::DISTANCE},
-	{'D',	"Math", "Dot", NodeType::DOT},
-	{'L',	"Math", "Length", NodeType::LENGTH},
-	{0,		"Math", "Max", NodeType::MAX},
-	{0,		"Math", "Min", NodeType::MIN},
-	{'P',	"Math", "Power", NodeType::POW},
-
-	{'A',	"Math", "Add", NodeType::ADD},
-	{0,		"Math", "Append", NodeType::APPEND},
-	{0,		"Math", "Divide", NodeType::DIVIDE},
-	{'X',	"Math", "Mix", NodeType::MIX},
-	{'M',	"Math", "Multiply", NodeType::MULTIPLY},
-	{'O',	"Math", "One minus", NodeType::ONEMINUS},
-	{0,		"Math", "Subtract", NodeType::SUBTRACT},
-
-	{0, "Vertex", "Normal", NodeType::NORMAL},
-	{0, "Vertex", "Position", NodeType::POSITION},
-	{0, "Vertex", "UV0", NodeType::UV0}
-};
-
 static bool edit(const char* label, ShaderEditorResource::ValueType* type) {
 	bool changed = false;
 	if (ImGui::BeginCombo(label, toString(*type))) {
@@ -2825,33 +2752,24 @@ ShaderEditorResource::Node* ShaderEditor::addNode(NodeType node_type, ImVec2 pos
 	return n;
 }
 
-static void nodeGroupUI(ShaderEditor& editor, Span<const NodeTypeDesc> nodes, ImVec2 pos) {
-	if (nodes.length() == 0) return;
-
-	const NodeTypeDesc* n = nodes.begin();
-	const char* group = n->group;
-
-	bool open = !group || ImGui::BeginMenu(group);
-	while (n != nodes.end() && n->group == nodes.begin()->group) {
-		if (open && ImGui::MenuItem(n->name)) {
-			editor.addNode(n->type, pos, true);
-		}
-		++n;
-	}
-	if (open && group) ImGui::EndMenu();
-
-	nodeGroupUI(editor, Span(n, nodes.end()), pos);
-}
-
 void ShaderEditor::onCanvasClicked(ImVec2 pos, i32 hovered_link) {
-	for (const auto& t : NODE_TYPES) {
-		if (t.key && os::isKeyDown((os::Keycode)t.key)) {
-			addNode(t.type, pos, false);
-			if (hovered_link >= 0) splitLink(m_resource->m_nodes.back(), m_resource->m_links, hovered_link);
-			pushUndo(NO_MERGE_UNDO);
-			break;
+	struct : INodeTypeVisitor {
+		INodeTypeVisitor& visitType(const char* label, ICreator& creator, char shortcut) override {
+			if (shortcut && os::isKeyDown((os::Keycode)shortcut)) {
+				creator.create(*editor, pos);
+				if (hovered_link >= 0) editor->splitLink(editor->m_resource->m_nodes.back(), editor->m_resource->m_links, hovered_link);
+				editor->pushUndo(NO_MERGE_UNDO);
+			}
+			return *this;
 		}
-	}
+		ShaderEditor* editor;
+		ImVec2 pos;
+		i32 hovered_link;
+	} visitor;
+	visitor.editor = this;
+	visitor.pos = pos;
+	visitor.hovered_link = hovered_link;
+	visitNodeTypes(visitor);
 }
 
 void ShaderEditor::onLinkDoubleClicked(ShaderEditor::Link& link, ImVec2 pos) {
@@ -2865,60 +2783,184 @@ void ShaderEditor::onLinkDoubleClicked(ShaderEditor::Link& link, ImVec2 pos) {
 	pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
 }
 
+ShaderEditor::INodeTypeVisitor& ShaderEditor::INodeTypeVisitor::visitType(const char* label, NodeType type, char shortcut ) {
+	struct : ICreator {
+		void create(ShaderEditor& editor, ImVec2 pos) override {
+			editor.addNode(type, pos, true);
+		};
+		NodeType type;
+	} creator;
+	creator.type = type;
+	return visitType(label, creator, shortcut);
+}
+
+
+void ShaderEditor::visitNodeTypes(INodeTypeVisitor& visitor) {
+	if (visitor.beginCategory("Constants")) {
+		visitor.visitType("Time", NodeType::TIME)
+		.visitType("Vertex ID", NodeType::VERTEX_ID)
+		.visitType("View direction", NodeType::VIEW_DIR)
+		.endCategory();
+	}
+
+	if (visitor.beginCategory("Functions")) {
+		for (const auto& fn : m_functions) {
+			const StaticString<LUMIX_MAX_PATH> name(Path::getBasename(fn->m_path.c_str()));
+			struct : INodeTypeVisitor::ICreator {
+				void create(ShaderEditor& editor, ImVec2 pos) override {
+					FunctionCallNode* node = (FunctionCallNode*)editor.addNode(NodeType::FUNCTION_CALL, pos, false);
+					node->m_function_resource = res;
+					editor.pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
+				};
+				ShaderEditorResource* res;
+			} creator;
+			creator.res = fn.get();
+			visitor.visitType(name, creator);
+		}
+		visitor.endCategory();
+	}
+
+	if (visitor.beginCategory("Math")) {
+		visitor.visitType("Abs", NodeType::ABS)
+		.visitType("All", NodeType::ALL)
+		.visitType("Any", NodeType::ANY)
+		.visitType("Ceil", NodeType::CEIL)
+		.visitType("Cos", NodeType::COS)
+		.visitType("Exp", NodeType::EXP, 'E')
+		.visitType("Exp2", NodeType::EXP2)
+		.visitType("Floor", NodeType::FLOOR)
+		.visitType("Fract", NodeType::FRACT)
+		.visitType("Log", NodeType::LOG)
+		.visitType("Log2", NodeType::LOG2)
+		.visitType("Normalize", NodeType::NORMALIZE, 'N')
+		.visitType("Not", NodeType::NOT)
+		.visitType("Round", NodeType::ROUND)
+		.visitType("Saturate", NodeType::SATURATE)
+		.visitType("Sin", NodeType::SIN)
+		.visitType("Sqrt", NodeType::SQRT)
+		.visitType("Tan", NodeType::TAN)
+		.visitType("Transpose", NodeType::TRANSPOSE)
+		.visitType("Trunc", NodeType::TRUNC)
+		.visitType("Cross", NodeType::CROSS)
+		.visitType("Distance", NodeType::DISTANCE)
+		.visitType("Dot", NodeType::DOT, 'D')
+		.visitType("Length", NodeType::LENGTH, 'L')
+		.visitType("Max", NodeType::MAX)
+		.visitType("Min", NodeType::MIN)
+		.visitType("Power", NodeType::POW, 'P')
+		.visitType("Add", NodeType::ADD, 'A')
+		.visitType("Append", NodeType::APPEND)
+		.visitType("Divide", NodeType::DIVIDE)
+		.visitType("Mix", NodeType::MIX, 'X')
+		.visitType("Multiply", NodeType::MULTIPLY, 'M')
+		.visitType("One minus", NodeType::ONEMINUS, 'O')
+		.visitType("Subtract", NodeType::SUBTRACT)
+		.endCategory();
+	}
+
+	if (visitor.beginCategory("Parameters")) {
+		visitor.visitType("Color", NodeType::COLOR_PARAM, 'C')
+		.visitType("Scalar", NodeType::SCALAR_PARAM, 'P')
+		.visitType("Vec4", NodeType::VEC4_PARAM, 'V')
+		.endCategory();
+	}
+
+	if (visitor.beginCategory("Utility")) {
+		visitor.visitType("Fresnel", NodeType::FRESNEL)
+		.visitType("Custom code", NodeType::CODE)
+		.visitType("Backface switch", NodeType::BACKFACE_SWITCH)
+		.visitType("If", NodeType::IF, 'I')
+		.visitType("Pixel depth", NodeType::PIXEL_DEPTH)
+		.visitType("Scene depth", NodeType::SCENE_DEPTH)
+		.visitType("Screen position", NodeType::SCREEN_POSITION)
+		.visitType("Static switch", NodeType::STATIC_SWITCH)
+		.visitType("Swizzle", NodeType::SWIZZLE, 'S')
+		.endCategory();
+	}
+
+	if (visitor.beginCategory("Vertex")) {
+		visitor.visitType("Normal", NodeType::NORMAL)
+		.visitType("Position", NodeType::POSITION)
+		.visitType("UV0", NodeType::UV0)
+		.endCategory();
+	}
+
+	switch (m_resource->getShaderType()) {
+		case ShaderResourceEditorType::SURFACE: break;
+		case ShaderResourceEditorType::FUNCTION: 
+			visitor.visitType("Function input", NodeType::FUNCTION_INPUT);
+			break;
+		case ShaderResourceEditorType::PARTICLE: {
+			if (visitor.beginCategory("Particles")) {
+				PBRNode* o = (PBRNode*)m_resource->m_nodes[0];
+				for (const String& a : o->m_attributes_names) {
+					struct : INodeTypeVisitor::ICreator {
+						void create(ShaderEditor& editor, ImVec2 pos) override {
+							ParticleStreamNode* node = (ParticleStreamNode*)editor.addNode(NodeType::PARTICLE_STREAM, pos, false);
+							node->m_stream = stream;
+							editor.pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
+						}
+						u32 stream;
+					} creator;
+					creator.stream = u32(&a - o->m_attributes_names.begin());
+					visitor.visitType(a.c_str(), creator);
+				}
+				visitor.endCategory();
+			}
+			break;
+		}
+	}
+
+	visitor
+		.visitType("Sample", NodeType::SAMPLE, 'T')
+		.visitType("Vector 4", NodeType::VEC4, '4')
+		.visitType("Vector 3", NodeType::VEC3, '3')
+		.visitType("Vector 2", NodeType::VEC2, '2')
+		.visitType("Number", NodeType::NUMBER, '1');
+}
+
 void ShaderEditor::onContextMenu(ImVec2 pos) {
 	static char filter[64] = "";
 	ImGui::SetNextItemWidth(150);
 	if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
 	ImGui::InputTextWithHint("##filter", "Filter", filter, sizeof(filter));
 	if (filter[0]) {
-		for (const auto& node_type : NODE_TYPES) {
-			if (stristr(node_type.name, filter)) {
-				if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(node_type.name)) {
-					addNode(node_type.type, pos, true);
-					filter[0] = '\0';
-					ImGui::CloseCurrentPopup();
-					break;
+		struct : INodeTypeVisitor {
+			INodeTypeVisitor& visitType(const char* label, ICreator& creator, char shortcut) override {
+				if (!created && stristr(label, filter)) {
+					if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(label)) {
+						creator.create(*editor, pos);
+						filter[0] = '\0';
+						ImGui::CloseCurrentPopup();
+						created = true;
+					}
 				}
+				return *this;
 			}
-		}
+			bool created = false;
+			ImVec2 pos;
+			ShaderEditor* editor;
+		} visitor;
+		visitor.editor = this;
+		visitor.pos = pos;
+		visitNodeTypes(visitor);
 	}
 	else {
-		nodeGroupUI(*this, Span(NODE_TYPES), pos);
-		
-		if (ImGui::BeginMenu("Functions")) {
-			for (const auto& fn : m_functions) {
-				const StaticString<LUMIX_MAX_PATH> name(Path::getBasename(fn->m_path.c_str()));
-				if (ImGui::MenuItem(name)) {
-					FunctionCallNode* node = (FunctionCallNode*)addNode(NodeType::FUNCTION_CALL, pos, false);
-					node->m_function_resource = fn.get();
-					pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
-				}
+		struct : INodeTypeVisitor {
+			bool beginCategory(const char* name) override { return ImGui::BeginMenu(name); }
+			void endCategory() override { ImGui::EndMenu(); }
+
+			INodeTypeVisitor& visitType(const char* label, ICreator& creator, char shortcut) override {
+				if (ImGui::MenuItem(label)) creator.create(*editor, pos);
+				return *this;
 			}
-			ImGui::EndMenu();
-		}
-		
-		switch (m_resource->getShaderType()) {
-			case ShaderResourceEditorType::SURFACE: break;
-			case ShaderResourceEditorType::FUNCTION: 
-				if (ImGui::MenuItem("Function input")) {
-					addNode(NodeType::FUNCTION_INPUT, pos, true);
-				}
-				break;
-			case ShaderResourceEditorType::PARTICLE: {
-				if (ImGui::BeginMenu("Particles")) {
-					PBRNode* o = (PBRNode*)m_resource->m_nodes[0];
-					for (const String& a : o->m_attributes_names) {
-						if (ImGui::MenuItem(a.c_str())) {
-							ParticleStreamNode* node = (ParticleStreamNode*)addNode(NodeType::PARTICLE_STREAM, pos, false);
-							node->m_stream = u32(&a - o->m_attributes_names.begin());
-							pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
-						}
-					}
-					ImGui::EndMenu();
-				}
-				break;
-			}
-		}
+
+			ImVec2 pos;
+			ShaderEditor* editor;
+		} visitor;
+		visitor.editor = this;
+		visitor.pos = pos;
+		visitNodeTypes(visitor);
 	}
 }
 

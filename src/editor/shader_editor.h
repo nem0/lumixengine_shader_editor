@@ -121,6 +121,18 @@ struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor {
 	StudioApp& m_app;
 
 private:
+	struct INodeTypeVisitor {
+		struct ICreator {
+			virtual void create(ShaderEditor& editor, ImVec2 pos) = 0;
+		};
+
+		virtual bool beginCategory(const char* name) { return true; }
+		virtual void endCategory() {}
+		virtual INodeTypeVisitor& visitType(const char* label, ICreator& creator, char shortcut = 0) = 0;
+		
+		INodeTypeVisitor& visitType(const char* label, NodeType type, char shortcut = 0);
+	};
+
 	const char* getName() const override { return "shader_editor"; }
 	bool isOpen() const { return m_is_open; }
 
@@ -147,6 +159,7 @@ private:
 	void onToggle();
 	void deleteSelectedNodes();
 	void deleteUnreachable();
+	void visitNodeTypes(INodeTypeVisitor& visitor);
 
 	IAllocator& m_allocator;
 	ImVec2 m_canvas_offset = ImVec2(0, 0);
