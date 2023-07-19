@@ -108,9 +108,9 @@ struct ShaderEditor : public StudioApp::GUIPlugin, NodeEditor {
 	explicit ShaderEditor(struct StudioApp& app);
 	~ShaderEditor();
 
-	void onWindowGUI();
+	void onGUI() override;
 	IAllocator& getAllocator() { return m_allocator; }
-	bool hasFocus() override { return m_is_focused; }
+	bool hasFocus() const override { return m_is_focused; }
 	void pushUndo(u32 tag) override;
 	ShaderEditorResource::Node* addNode(NodeType node_type, ImVec2 pos, bool save_undo);
 	ShaderEditorResource* getResource() { return m_resource; }
@@ -160,16 +160,13 @@ private:
 	void deleteSelectedNodes();
 	void deleteUnreachable();
 	void visitNodeTypes(INodeTypeVisitor& visitor);
+	bool onAction(const Action& action) override;
 
 	IAllocator& m_allocator;
 	ImVec2 m_canvas_offset = ImVec2(0, 0);
 	bool m_is_focused;
 	String m_source;
-	Action m_save_action;
-	Action m_undo_action;
-	Action m_redo_action;
 	Action m_toggle_ui;
-	Action m_delete_action;
 	Action m_generate_action;
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;

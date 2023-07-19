@@ -1793,7 +1793,8 @@ struct PBRNode : ShaderEditorResource::Node
 
 		FileSelector& fs = m_resource.m_editor.m_app.getFileSelector();
 		if (fs.gui("Select particle", &m_show_fs, "par", false)) {
-			m_vertex_decl = ParticleEditor::getVertexDecl(fs.getPath(), m_attributes_names, m_resource.m_editor.m_app);
+			// TODO emitter index
+			m_vertex_decl = ParticleEditor::getVertexDecl(fs.getPath(), 0, m_attributes_names, m_resource.m_editor.m_app);
 			if (m_vertex_decl.attributes_count < 1 || m_vertex_decl.attributes[0].components_count != 3) {
 				logError("First particle shader input must be position (have 3 components)");
 			}
@@ -2350,25 +2351,7 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 	, m_recent_paths("shader_editor_recent_", 10, app)
 {
 	newGraph(ShaderResourceEditorType::SURFACE);
-	m_save_action.init(ICON_FA_SAVE "Save", "Shader editor save", "shader_editor_save", ICON_FA_SAVE, os::Keycode::S, Action::Modifiers::CTRL, true);
-	m_save_action.func.bind<&ShaderEditor::save>(this);
-	m_save_action.plugin = this;
-
 	m_generate_action.init("Generate shader", "Shader editor generate", "shader_editor_generate", ICON_FA_CHECK, os::Keycode::E, Action::Modifiers::CTRL, true);
-	m_generate_action.func.bind<&ShaderEditor::generateAndSaveSource>(this);
-	m_generate_action.plugin = this;
-
-	m_undo_action.init(ICON_FA_UNDO "Undo", "Shader editor undo", "shader_editor_undo", ICON_FA_UNDO, os::Keycode::Z, Action::Modifiers::CTRL, true);
-	m_undo_action.func.bind<&ShaderEditor::undo>((SimpleUndoRedo*)this);
-	m_undo_action.plugin = this;
-
-	m_redo_action.init(ICON_FA_REDO "Redo", "Shader editor redo", "shader_editor_redo", ICON_FA_REDO, os::Keycode::Z, Action::Modifiers::CTRL | Action::Modifiers::SHIFT, true);
-	m_redo_action.func.bind<&ShaderEditor::redo>((SimpleUndoRedo*)this);
-	m_redo_action.plugin = this;
-
-	m_delete_action.init(ICON_FA_TRASH "Delete", "Shader editor delete", "shader_editor_delete", ICON_FA_TRASH, os::Keycode::DEL, Action::Modifiers::NONE, true);
-	m_delete_action.func.bind<&ShaderEditor::deleteSelectedNodes>(this);
-	m_delete_action.plugin = this;
 
 	m_toggle_ui.init("Shader Editor", "Toggle shader editor", "shaderEditor", "", true);
 	m_toggle_ui.func.bind<&ShaderEditor::onToggle>(this);
@@ -2376,14 +2359,19 @@ ShaderEditor::ShaderEditor(StudioApp& app)
 
 	m_app.addWindowAction(&m_toggle_ui);
 	m_app.addAction(&m_generate_action);
-	m_app.addAction(&m_save_action);
-	m_app.addAction(&m_undo_action);
-	m_app.addAction(&m_redo_action);
-	m_app.addAction(&m_delete_action);
-
 	
 	FileSystem& fs = m_app.getEngine().getFileSystem();
 	scanFunctions("");
+}
+
+bool ShaderEditor::onAction(const Action& action) {
+	if (&action == &m_generate_action) generateAndSaveSource();
+	else if (&action == &m_app.getDeleteAction()) deleteSelectedNodes();
+	else if (&action == &m_app.getSaveAction()) save();
+	else if (&action == &m_app.getUndoAction()) undo();
+	else if (&action == &m_app.getRedoAction()) redo();
+	else return false;
+	return true;
 }
 
 void ShaderEditor::deleteSelectedNodes() {
@@ -2400,10 +2388,6 @@ ShaderEditor::~ShaderEditor()
 {
 	m_app.removeAction(&m_toggle_ui);
 	m_app.removeAction(&m_generate_action);
-	m_app.removeAction(&m_save_action);
-	m_app.removeAction(&m_undo_action);
-	m_app.removeAction(&m_redo_action);
-	m_app.removeAction(&m_delete_action);
 	LUMIX_DELETE(m_allocator, m_resource);
 }
 
@@ -3048,14 +3032,14 @@ void ShaderEditor::onGUIMenu() {
 			menuItem(m_generate_action, !m_resource->m_path.isEmpty());
 			ImGui::MenuItem("View source", nullptr, &m_source_open);
 			if (ImGui::MenuItem("Open")) m_show_open = true;
-			menuItem(m_save_action, true);
+			menuItem(m_app.getSaveAction(), true);
 			if (ImGui::MenuItem("Save as")) m_show_save_as = true;
 			if (const char* path = m_recent_paths.menu(); path) load(path);
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
-			menuItem(m_undo_action, canUndo());
-			menuItem(m_redo_action, canRedo());
+			menuItem(m_app.getUndoAction(), canUndo());
+			menuItem(m_app.getRedoAction(), canRedo());
 			if (ImGui::MenuItem(ICON_FA_BRUSH "Clean")) deleteUnreachable();
 			ImGui::EndMenu();
 		}
@@ -3118,7 +3102,7 @@ void ShaderEditor::scanFunctions(const char* dir) {
 	os::destroyFileIterator(iter);
 }
 
-void ShaderEditor::onWindowGUI()
+void ShaderEditor::onGUI()
 {
 	if (m_source_open) {
 		ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
