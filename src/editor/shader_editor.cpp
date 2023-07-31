@@ -1,5 +1,6 @@
 #include "editor/asset_browser.h"
 #include "editor/asset_compiler.h"
+#include "editor/editor_asset.h"
 #include "editor/settings.h"
 #include "editor/studio_app.h"
 #include "engine/crt.h"
@@ -405,143 +406,109 @@ struct ShaderEditorResource {
 
 ResourceType ShaderEditorResource::TYPE("shader_graph");
 
-struct ShaderEditor final : StudioApp::IPlugin {
-	struct AssetCompilerPlugin final : AssetCompiler::IPlugin {
-		bool compile(const Path& src) override { return true; }
-	};
-
-	struct AssetBrowserPlugin final : AssetBrowser::Plugin {
-		AssetBrowserPlugin(ShaderEditor& editor, StudioApp& app, IAllocator& allocator) 
-			: Plugin(allocator)
+struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
+	struct FunctionPlugin : EditorAssetPlugin {
+		FunctionPlugin(ShaderEditor& editor) 
+			: EditorAssetPlugin("Shader graph function", "sfn", TYPE, editor.m_app, editor.m_allocator)
 			, m_editor(editor)
-			, m_allocator(allocator)
-			, m_app(app)
 		{}
-
-		bool canCreateResource() const override { return true; }
+		
+		void onResourceDoubleClicked(const Path& path) override { m_editor.open(path); }
 
 		void createResource(OutputMemoryStream& blob) override {
-			ShaderEditorResource res(Path("new shader"), m_editor, m_allocator);
-			res.init(ShaderResourceEditorType::SURFACE);
-			res.serialize(blob);;
+			ShaderEditorResource res(Path("new shader function"), m_editor, m_editor.m_allocator);
+			res.init(ShaderResourceEditorType::FUNCTION);
+			res.serialize(blob);
 		}
 
-		const char* getDefaultExtension() const { return "sed"; }
-		void deserialize(InputMemoryStream& blob) override { ASSERT(false); }
-		void serialize(OutputMemoryStream& blob) override {}
-		bool onGUI(Span<AssetBrowser::ResourceView*> resource) override { return false; }
-		const char* getName() const override { return "Shader graph"; }
-		ResourceType getResourceType() const override { return ShaderEditorResource::TYPE; }
-
-		AssetBrowser::ResourceView& createView(const Path& path, StudioApp& app) override {
-			struct View : AssetBrowser::ResourceView {
-				View(ShaderEditor& editor, const Path& path, StudioApp& app)
-					: resource(path, editor, app.getAllocator())
-				{
-					FileSystem& fs = app.getEngine().getFileSystem();
-					OutputMemoryStream content(app.getAllocator());
-					if (fs.getContentSync(path, content)) {
-						InputMemoryStream blob(content);
-						m_is_ready = resource.deserialize(blob);
-					}
-				}
-			
-				const struct Path& getPath() override { return resource.m_path; }
-				struct ResourceType getType() override { return ShaderEditorResource::TYPE; }
-				bool isEmpty() override { return false; }
-				bool isReady() override { return m_is_ready; }
-				bool isFailure() override { return !m_is_ready; }
-				u64 size() override { return 0; }
-				void destroy() override { LUMIX_DELETE(*allocator, this); }
-				Resource* getResource() override { ASSERT(false); return nullptr; }
-
-				ShaderEditorResource resource;
-				IAllocator* allocator;
-				bool m_is_ready = false;
-			};
-
-			IAllocator& allocator = m_app.getAllocator();
-			View* view = LUMIX_NEW(allocator, View)(m_editor, path, m_app);
-			view->allocator = &allocator;
-			return *view;	
-		}
-
-		void onResourceDoubleClicked(const Path& path) {
-			m_editor.open(path.c_str());
-		}
-
-		IAllocator& m_allocator;
 		ShaderEditor& m_editor;
-		StudioApp& m_app;
+		static ResourceType TYPE;
+	};
+
+	struct ParticlePlugin : EditorAssetPlugin {
+		ParticlePlugin(ShaderEditor& editor) 
+			: EditorAssetPlugin("Particle shader graph", "sep", TYPE, editor.m_app, editor.m_allocator)
+			, m_editor(editor)
+		{}
+		
+		void onResourceDoubleClicked(const Path& path) override { m_editor.open(path); }
+
+		void createResource(OutputMemoryStream& blob) override {
+			ShaderEditorResource res(Path("new particle shader"), m_editor, m_editor.m_allocator);
+			res.init(ShaderResourceEditorType::PARTICLE);
+			res.serialize(blob);
+		}
+
+		ShaderEditor& m_editor;
+		static ResourceType TYPE;
 	};
 
 	ShaderEditor(StudioApp& app)
-		: m_allocator(app.getAllocator(), "shader editor")
+		: EditorAssetPlugin("Surface shader graph", "sed", ShaderEditorResource::TYPE, app, m_allocator)
+		, m_allocator(app.getAllocator(), "shader editor")
 		, m_app(app)
-		, m_asset_browser_plugin(*this, app, m_allocator)
 		, m_functions(m_allocator)
 		, m_windows(m_allocator)
-	{}
-
-	~ShaderEditor() {
-		m_app.getAssetBrowser().removePlugin(m_asset_browser_plugin);
-		m_app.getAssetCompiler().removePlugin(m_asset_compiler_plugin);
+		, m_function_plugin(*this)
+		, m_particle_plugin(*this)
+	{
+		m_app.getAssetCompiler().listChanged().bind<&ShaderEditor::onResourceListChanged>(this);
 	}
 
-	void scanFunctions(const char* dir) {
-		// TODO merge with other file iterators, e.g. with asset compiler iterator
+	void createResource(OutputMemoryStream& blob) override {
+		ShaderEditorResource res(Path("new surface shader"), *this, m_allocator);
+		res.init(ShaderResourceEditorType::SURFACE);
+		res.serialize(blob);
+	}
+
+	void onResourceDoubleClicked(const Path& path) {
+		open(path.c_str());
+	}
+
+	void onResourceListChanged(const Path& path) {
+		if (Path::hasExtension(path, "sfn")) addFunction(path);
+	}
+
+	void addFunction(const Path& path) {
 		FileSystem& fs = m_app.getEngine().getFileSystem();
-		os::FileIterator* iter = fs.createFileIterator(dir);
-		os::FileInfo info;
-		while (os::getNextFile(iter, &info)) {
-			if (info.filename[0] == '.') continue;
-			if (info.is_directory) {
-				Path subdir(dir, info.filename, "/");
-				scanFunctions(subdir);
-				continue;
-			}
-
-			if (!Path::hasExtension(info.filename, "sed")) continue;
-
-			OutputMemoryStream data(m_allocator);
-			const Path path(dir, info.filename);
-			UniquePtr<ShaderEditorResource> res = UniquePtr<ShaderEditorResource>::create(m_allocator, path, *this, m_allocator);
-			if (!fs.getContentSync(Path(path), data)) {
-				logError("Failed to load ", path);
-				continue;
-			}
-
-			InputMemoryStream blob(data);
-			res->deserialize(blob);
-			res->m_path = path;
-			if (res->getShaderType() == ShaderResourceEditorType::FUNCTION) m_functions.emplace(res.move());
+		OutputMemoryStream data(m_allocator);
+		UniquePtr<ShaderEditorResource> shd = UniquePtr<ShaderEditorResource>::create(m_allocator, path, *this, m_allocator);
+		if (!fs.getContentSync(path, data)) {
+			logError("Failed to load ", path);
+			return;
 		}
-		os::destroyFileIterator(iter);
+
+		InputMemoryStream blob(data);
+		shd->deserialize(blob);
+		shd->m_path = path;
+		ASSERT(shd->getShaderType() == ShaderResourceEditorType::FUNCTION);
+		m_functions.emplace(shd.move());
 	}
 
 	void init() override {
-		m_app.getAssetBrowser().addPlugin(m_asset_browser_plugin);
-		const char* exts[] = { "sed", nullptr };
-		AssetCompiler& compiler = m_app.getAssetCompiler();
-		compiler.registerExtension("sed", ShaderEditorResource::TYPE);
-		compiler.addPlugin(m_asset_compiler_plugin, exts);
-
-		FileSystem& fs = m_app.getEngine().getFileSystem();
-		scanFunctions("");
+		auto& resources = m_app.getAssetCompiler().lockResources();
+		for (const AssetCompiler::ResourceItem& res : resources) {
+			if (res.type != FunctionPlugin::TYPE) continue;
+			addFunction(res.path);
+		}
+		m_app.getAssetCompiler().unlockResources();
 	}
 
-	const char* getName() const override { return "shader editor"; }
+	const char* StudioApp::IPlugin::getName() const override { return "shader editor"; }
 	bool showGizmo(WorldView&, ComponentUID) override { return false; }
 
 	void open(const char* path);
 
 	TagAllocator m_allocator;
 	StudioApp& m_app;
-	AssetCompilerPlugin m_asset_compiler_plugin;
-	AssetBrowserPlugin m_asset_browser_plugin;
 	Array<UniquePtr<ShaderEditorResource>> m_functions;
 	Array<struct ShaderEditorWindow*> m_windows;
+	FunctionPlugin m_function_plugin;
+	ParticlePlugin m_particle_plugin;
 };
+
+ResourceType ShaderEditor::FunctionPlugin::TYPE("shader_graph_function");
+ResourceType ShaderEditor::ParticlePlugin::TYPE("particle_shader_graph");
 
 struct VertexOutput {
 	ShaderEditorResource::ValueType type;
@@ -3012,6 +2979,7 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 		}
 
 		m_resource.m_path = path;
+		m_dirty = false;
 	}
 
 	void load(const char* path) {
