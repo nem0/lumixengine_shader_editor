@@ -139,7 +139,7 @@ struct ShaderEditorResource {
 		virtual ShaderNodeType getType() const = 0;
 
 		bool nodeGUI() override;
-		void generateOnce(OutputMemoryStream& blob);
+		bool generateOnce(OutputMemoryStream& blob);
 
 		void inputSlot();
 		void outputSlot();
@@ -322,7 +322,7 @@ struct ShaderEditorResource {
 		return *node;
 	}
 
-	String generate() {
+	bool generate(String* source) {
 		markReachableNodes();
 		colorLinks();
 
@@ -330,13 +330,14 @@ struct ShaderEditorResource {
 		blob.reserve(32 * 1024);
 
 		for (Node* n : m_nodes) n->m_error = "";
-		m_nodes[0]->generateOnce(blob);
+		if (!m_nodes[0]->generateOnce(blob)) return false;
 
-		String res(m_allocator);
-		res.resize((u32)blob.size());
-		memcpy(res.getData(), blob.data(), res.length());
-		res.getData()[res.length()] = '\0';
-		return static_cast<String&&>(res);
+		if (source) {
+			source->resize((u32)blob.size());
+			memcpy(source->getData(), blob.data(), source->length());
+			source->getData()[source->length()] = '\0';
+		}
+		return true;
 	}
 
 	void serialize(OutputMemoryStream& blob) {
@@ -358,8 +359,7 @@ struct ShaderEditorResource {
 			blob.write(l.to);
 		}
 
-		generate();
-		colorLinks();
+		generate(nullptr);
 	}
 
 	bool deserialize(InputMemoryStream& blob) {
@@ -406,13 +406,18 @@ struct ShaderEditorResource {
 
 ResourceType ShaderEditorResource::TYPE("shader_graph");
 
-struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
+struct ShaderEditor final : StudioApp::IPlugin, EditorAssetPlugin {
 	struct FunctionPlugin : EditorAssetPlugin {
 		FunctionPlugin(ShaderEditor& editor) 
 			: EditorAssetPlugin("Shader graph function", "sfn", TYPE, editor.m_app, editor.m_allocator)
 			, m_editor(editor)
 		{}
 		
+		void addSubresources(AssetCompiler& compiler, const char* path) override {
+			compiler.addResource(TYPE, path);
+			m_editor.addFunction(Path(path));
+		}
+
 		void onResourceDoubleClicked(const Path& path) override { m_editor.open(path); }
 
 		void createResource(OutputMemoryStream& blob) override {
@@ -425,35 +430,32 @@ struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
 		static ResourceType TYPE;
 	};
 
-	struct ParticlePlugin : EditorAssetPlugin {
-		ParticlePlugin(ShaderEditor& editor) 
-			: EditorAssetPlugin("Particle shader graph", "sep", TYPE, editor.m_app, editor.m_allocator)
-			, m_editor(editor)
-		{}
-		
-		void onResourceDoubleClicked(const Path& path) override { m_editor.open(path); }
-
-		void createResource(OutputMemoryStream& blob) override {
-			ShaderEditorResource res(Path("new particle shader"), m_editor, m_editor.m_allocator);
-			res.init(ShaderResourceEditorType::PARTICLE);
-			res.serialize(blob);
-		}
-
-		ShaderEditor& m_editor;
-		static ResourceType TYPE;
-	};
-
 	ShaderEditor(StudioApp& app)
-		: EditorAssetPlugin("Surface shader graph", "sed", ShaderEditorResource::TYPE, app, m_allocator)
+		: EditorAssetPlugin("Shader graph", "sed", Shader::TYPE, app, m_allocator)
 		, m_allocator(app.getAllocator(), "shader editor")
 		, m_app(app)
 		, m_functions(m_allocator)
-		, m_windows(m_allocator)
 		, m_function_plugin(*this)
-		, m_particle_plugin(*this)
-	{
-		m_app.getAssetCompiler().listChanged().bind<&ShaderEditor::onResourceListChanged>(this);
+	{}
+
+	bool compile(const Path& src) override {
+		ShaderEditorResource res(src, *this, m_allocator);
+		if (!res.load(m_app)) {
+			logError("Failed to load ", src);
+			return false;
+		}
+
+		String source(m_allocator);
+		if (!res.generate(&source)) return false;
+
+		Span<const u8> span((const u8*)source.c_str(), source.length());
+		
+		registerDependencies(res);
+		
+		return m_app.getAssetCompiler().writeCompiledResource(src, span);
 	}
+
+	void registerDependencies(const ShaderEditorResource& res);
 
 	void createResource(OutputMemoryStream& blob) override {
 		ShaderEditorResource res(Path("new surface shader"), *this, m_allocator);
@@ -465,10 +467,6 @@ struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
 		open(path.c_str());
 	}
 
-	void onResourceListChanged(const Path& path) {
-		if (Path::hasExtension(path, "sfn")) addFunction(path);
-	}
-
 	void addFunction(const Path& path) {
 		FileSystem& fs = m_app.getEngine().getFileSystem();
 		OutputMemoryStream data(m_allocator);
@@ -478,6 +476,7 @@ struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
 			return;
 		}
 
+		m_functions.eraseItems([&](const UniquePtr<ShaderEditorResource>& f){ return f->m_path == path; });
 		InputMemoryStream blob(data);
 		shd->deserialize(blob);
 		shd->m_path = path;
@@ -485,7 +484,9 @@ struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
 		m_functions.emplace(shd.move());
 	}
 
-	void init() override {
+	void init() {}
+
+	void listLoaded() override {
 		auto& resources = m_app.getAssetCompiler().lockResources();
 		for (const AssetCompiler::ResourceItem& res : resources) {
 			if (res.type != FunctionPlugin::TYPE) continue;
@@ -502,13 +503,10 @@ struct ShaderEditor final : EditorAssetPlugin, StudioApp::IPlugin {
 	TagAllocator m_allocator;
 	StudioApp& m_app;
 	Array<UniquePtr<ShaderEditorResource>> m_functions;
-	Array<struct ShaderEditorWindow*> m_windows;
 	FunctionPlugin m_function_plugin;
-	ParticlePlugin m_particle_plugin;
 };
 
 ResourceType ShaderEditor::FunctionPlugin::TYPE("shader_graph_function");
-ResourceType ShaderEditor::ParticlePlugin::TYPE("particle_shader_graph");
 
 struct VertexOutput {
 	ShaderEditorResource::ValueType type;
@@ -641,10 +639,10 @@ void ShaderEditorResource::Node::outputSlot() {
 	++m_output_count;
 }
 
-void ShaderEditorResource::Node::generateOnce(OutputMemoryStream& blob) {
-	if (m_generated) return;
+bool ShaderEditorResource::Node::generateOnce(OutputMemoryStream& blob) {
+	if (m_generated) return true;
 	m_generated = true;
-	generate(blob);
+	return generate(blob);
 }
 
 bool ShaderEditorResource::Node::nodeGUI() {
@@ -2168,6 +2166,8 @@ struct PBRNode : ShaderEditorResource::Node
 	bool onGUI() override {
 		ImGuiEx::NodeTitle(m_type == Type::SURFACE ? "PBR Surface" : "PBR Particles");
 
+		bool changed = ImGui::Combo("Type", (i32*)&m_type, "SURFACE\0PARTICLES\0");
+
 		inputSlot(); ImGui::TextUnformatted("Albedo");
 		inputSlot(); ImGui::TextUnformatted("Normal");
 		inputSlot(); ImGui::TextUnformatted("Opacity");
@@ -2192,9 +2192,10 @@ struct PBRNode : ShaderEditorResource::Node
 			if (m_vertex_decl.attributes_count < 1 || m_vertex_decl.attributes[0].components_count != 3) {
 				logError("First particle shader input must be position (have 3 components)");
 			}
+			changed = true;
 		}
 
-		return false;
+		return changed;
 	}
 
 	enum class Type : u32 {
@@ -2366,7 +2367,8 @@ bool PBRNode::generate(OutputMemoryStream& blob) {
 		// TODO vertex shader functions
 		for (ShaderEditorResource* f : functions) {
 			f->clearGeneratedFlags();
-			String s = f->generate();
+			String s(m_resource.m_allocator);
+			if (!f->generate(&s)) return false;
 			blob << s.c_str() << "\n\n";
 		}
 		for (u32 i : particle_streams) {
@@ -2381,7 +2383,8 @@ bool PBRNode::generate(OutputMemoryStream& blob) {
 		blob << "fragment_preface = [[\n";
 		for (ShaderEditorResource* f : functions) {
 			f->clearGeneratedFlags();
-			String s = f->generate();
+			String s(m_resource.m_allocator);
+			if (!f->generate(&s)) return false;
 			blob << s.c_str() << "\n\n";
 		}
 		blob << "]],\n\n";
@@ -2841,7 +2844,7 @@ ShaderEditorResource::Node* ShaderEditorResource::createNode(int type) {
 	return nullptr;
 }
 
-struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
+struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 	using Node = ShaderEditorResource::Node;
 	using Link = NodeEditorLink;
 
@@ -2859,11 +2862,11 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 
 	explicit ShaderEditorWindow(const Path& path, ShaderEditor& editor, StudioApp& app, IAllocator& allocator)
 		: NodeEditor(app.getAllocator())
+		, AssetEditorWindow(app)
 		, m_editor(editor)
 		, m_allocator(allocator)
 		, m_app(app)
 		, m_source(allocator)
-		, m_is_focused(false)
 		, m_resource(path, editor, allocator)
 	{
 		m_resource.load(app);
@@ -2871,8 +2874,7 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 		m_dirty = false;
 	}
 
-
-	void onGUI() override {
+	void windowGUI() override {
 		if (m_source_open) {
 			ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
 			if (ImGui::Begin("Shader source", &m_source_open)) {
@@ -2886,85 +2888,26 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 			ImGui::End();
 		}
 
-		m_is_focused = false;
-		bool open = true;
-
-		StaticString<LUMIX_MAX_PATH> title(Path::getBasename(m_resource.m_path.c_str()));
-
-		if (m_focus_request) {
-			ImGui::SetNextWindowFocus();
-			m_focus_request = false;
-		}
-		ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowDockID(m_dock_id ? m_dock_id : m_app.getDockspaceID(), ImGuiCond_Appearing);
-		ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoSavedSettings;
-		if (m_dirty) flags |= ImGuiWindowFlags_UnsavedDocument;
-		if (ImGui::Begin(title, &open, flags))
-		{
-			m_is_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-
-			onGUIMenu();
+		onGUIMenu();
 		
-			FileSelector& fs = m_app.getFileSelector();
-			if (fs.gui("Save As", &m_show_save_as, "sed", true)) saveAs(fs.getPath());
+		FileSelector& fs = m_app.getFileSelector();
+		if (fs.gui("Save As", &m_show_save_as, "sed", true)) saveAs(fs.getPath());
 
-			ImGui::BeginChild("canvas");
-			nodeEditorGUI(m_resource.m_nodes, m_resource.m_links);
-			ImGui::EndChild();
-		}
-		if (!open) {
-			if (m_dirty) {
-				ImGui::OpenPopup("Confirm##cse");
-			}
-			else {
-				m_editor.m_windows.eraseItem(this);
-				m_app.removePlugin(*this);
-				LUMIX_DELETE(m_app.getAllocator(), this);
-			}
-		}
-		if (ImGui::BeginPopupModal("Confirm##cse", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
-			ImGui::TextUnformatted("All changes will be lost. Continue anyway?");
-			if (ImGui::Selectable("Yes")) {
-				m_editor.m_windows.eraseItem(this);
-				m_app.removePlugin(*this);
-				LUMIX_DELETE(m_app.getAllocator(), this);
-			}
-			ImGui::Selectable("No");
-			ImGui::EndPopup();
-		}
-		ImGui::End();
+		ImGui::BeginChild("canvas");
+		nodeEditorGUI(m_resource.m_nodes, m_resource.m_links);
+		ImGui::EndChild();
 	}
+
+	const Path& getPath() override { return m_resource.m_path; }
+	void destroy() override { LUMIX_DELETE(m_app.getAllocator(), this); }
 
 	void pushUndo(u32 tag) override {
 		m_dirty = true;
 		SimpleUndoRedo::pushUndo(tag);
-		m_source = m_resource.generate();
+		m_resource.generate(&m_source);
 	}
 
 	const char* getName() const override { return "shader_editor"; }
-	bool hasFocus() const override { return m_is_focused; }
-
-	void saveSource() {
-		PathInfo fi(m_resource.m_path.c_str());
-		StaticString<LUMIX_MAX_PATH> path(fi.m_dir, fi.m_basename, ".shd");
-		os::OutputFile file;
-		if (!file.open(path)) {
-			logError("Could not create file ", path);
-			return;
-		}
-
-		if (!file.write(m_source.c_str(), m_source.length())) {
-			file.close();
-			logError("Could not write ", path);
-			return;
-		}
-		file.close();
-	}
-
-	void generateAndSaveSource() {
-		m_source = m_resource.generate();
-		saveSource();
-	}
 
 	void saveAs(const char* path) {
 		// TODO update shaders using a function when the function is changed
@@ -3005,11 +2948,6 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 	void deserialize(InputMemoryStream& blob) override {
 		m_resource.clear();
 		m_resource.deserialize(blob);
-	}
-
-	void save() {
-		if (m_resource.m_path.isEmpty()) m_show_save_as = true;
-		else saveAs(m_resource.m_path.c_str());
 	}
 
 	void onCanvasClicked(ImVec2 pos, i32 hovered_link) override {
@@ -3091,19 +3029,21 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 	void onGUIMenu() {
 		if(ImGui::BeginMenuBar()) {
 			if(ImGui::BeginMenu("File")) {
-				//menuItem(m_generate_action, !m_resource.m_path.isEmpty());
 				ImGui::MenuItem("View source", nullptr, &m_source_open);
-				if (menuItem(m_app.getSaveAction(), true)) save();
+				if (menuItem(m_app.getSaveAction(), true)) saveAs(m_resource.m_path.c_str());
 				if (ImGui::MenuItem("Save as")) m_show_save_as = true;
 				ImGui::EndMenu();
 			}
 			if (ImGui::BeginMenu("Edit")) {
 				if (menuItem(m_app.getUndoAction(), canUndo())) undo();
 				if (menuItem(m_app.getRedoAction(), canRedo())) redo();
-				if (ImGui::MenuItem(ICON_FA_BRUSH "Clean")) deleteUnreachable();
+				if (ImGui::MenuItem(ICON_FA_BRUSH "Clear")) deleteUnreachable();
 				ImGui::EndMenu();
 			}
-
+			if (ImGuiEx::IconButton(ICON_FA_SAVE, "Save")) saveAs(m_resource.m_path.c_str());
+			if (ImGuiEx::IconButton(ICON_FA_UNDO, "Undo", canUndo())) undo();
+			if (ImGuiEx::IconButton(ICON_FA_REDO, "Redo", canRedo())) redo();
+			if (ImGuiEx::IconButton(ICON_FA_BRUSH, "Clear")) deleteUnreachable();
 			ImGui::EndMenuBar();
 		}
 	}
@@ -3121,7 +3061,7 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 
 	bool onAction(const Action& action) override {
 		if (&action == &m_app.getDeleteAction()) deleteSelectedNodes();
-		else if (&action == &m_app.getSaveAction()) save();
+		else if (&action == &m_app.getSaveAction()) saveAs(m_resource.m_path.c_str());
 		else if (&action == &m_app.getUndoAction()) undo();
 		else if (&action == &m_app.getRedoAction()) redo();
 		else return false;
@@ -3274,30 +3214,31 @@ struct ShaderEditorWindow : public StudioApp::GUIPlugin, NodeEditor {
 	IAllocator& m_allocator;
 	ShaderEditor& m_editor;
 	ShaderEditorResource m_resource;
-	ImVec2 m_canvas_offset = ImVec2(0, 0);
-	bool m_is_focused;
 	String m_source;
 	ImGuiEx::Canvas m_canvas;
 	bool m_source_open = false;
 	bool m_show_save_as = false;
-	bool m_dirty = false;
-	bool m_focus_request = false;
-	ImGuiID m_dock_id = 0;
 };
 
-void ShaderEditor::open(const char* path) {
-	for (ShaderEditorWindow* win : m_windows) {
-		if (win->m_resource.m_path == path) {
-			win->m_focus_request = true;
-			return;
+void ShaderEditor::registerDependencies(const ShaderEditorResource& res) {
+	for (ShaderEditorResource::Node* n : res.m_nodes) {
+		if (n->getType() == ShaderNodeType::FUNCTION_CALL) {
+			FunctionCallNode* fn = (FunctionCallNode*)n;
+			m_app.getAssetCompiler().registerDependency(res.m_path, fn->m_resource.m_path);
 		}
 	}
-	
+}
+
+void ShaderEditor::open(const char* path) {
+	AssetBrowser& ab = m_app.getAssetBrowser();
+	if (AssetEditorWindow* win = ab.getWindow(Path(path))) {
+		win->m_focus_request = true;
+		return;
+	}
+
 	IAllocator& allocator = m_app.getAllocator();
 	ShaderEditorWindow* win = LUMIX_NEW(allocator, ShaderEditorWindow)(Path(path), *this, m_app, m_app.getAllocator());
-	if (!m_windows.empty()) win->m_dock_id = m_windows.last()->m_dock_id;
-	m_windows.push(win);
-	m_app.addPlugin(*win);
+	ab.addWindow(win);
 }
 
 ShaderEditorWindow::INodeTypeVisitor& ShaderEditorWindow::INodeTypeVisitor::visitType(const char* label, ShaderNodeType type, char shortcut ) {
