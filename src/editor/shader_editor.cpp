@@ -2971,7 +2971,7 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 	}
 
 	void onLinkDoubleClicked(ShaderEditorWindow::Link& link, ImVec2 pos) override {
-		ShaderEditorResource::Node* n = addNode(ShaderNodeType::PIN, pos, false);
+		ShaderEditorResource::Node* n = addNode(ShaderNodeType::PIN, pos);
 		ShaderEditorResource::Link new_link;
 		new_link.color = link.color;
 		new_link.from = n->m_id | OUTPUT_FLAG; 
@@ -2992,6 +2992,7 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 					if (!created && stristr(label, filter)) {
 						if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(label)) {
 							creator.create(*editor, pos);
+							editor->pushUndo(NO_MERGE_UNDO);
 							filter[0] = '\0';
 							ImGui::CloseCurrentPopup();
 							created = true;
@@ -3013,7 +3014,10 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 				void endCategory() override { ImGui::EndMenu(); }
 
 				INodeTypeVisitor& visitType(const char* label, ICreator& creator, char shortcut) override {
-					if (ImGui::MenuItem(label)) creator.create(*editor, pos);
+					if (ImGui::MenuItem(label)) {
+						creator.create(*editor, pos);
+						editor->pushUndo(NO_MERGE_UNDO);
+					}
 					return *this;
 				}
 
@@ -3068,7 +3072,7 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 		return true;
 	}
 
-	ShaderEditorResource::Node* addNode(ShaderNodeType node_type, ImVec2 pos, bool save_undo) {
+	ShaderEditorResource::Node* addNode(ShaderNodeType node_type, ImVec2 pos) {
 		Node* n = m_resource.createNode((int)node_type);
 		n->m_id = ++m_resource.m_last_node_id;
 		n->m_pos = pos;
@@ -3082,7 +3086,6 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 			}
 			m_half_link_start = 0;
 		}
-		if (save_undo) pushUndo(NO_MERGE_UNDO);
 		return n;
 	}
 
@@ -3099,9 +3102,8 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 				const StaticString<LUMIX_MAX_PATH> name(Path::getBasename(fn->m_path.c_str()));
 				struct : INodeTypeVisitor::ICreator {
 					void create(ShaderEditorWindow& editor, ImVec2 pos) override {
-						FunctionCallNode* node = (FunctionCallNode*)editor.addNode(ShaderNodeType::FUNCTION_CALL, pos, false);
+						FunctionCallNode* node = (FunctionCallNode*)editor.addNode(ShaderNodeType::FUNCTION_CALL, pos);
 						node->m_function_resource = res;
-						editor.pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
 					};
 					ShaderEditorResource* res;
 				} creator;
@@ -3187,9 +3189,8 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 					for (const String& a : o->m_attributes_names) {
 						struct : INodeTypeVisitor::ICreator {
 							void create(ShaderEditorWindow& editor, ImVec2 pos) override {
-								ParticleStreamNode* node = (ParticleStreamNode*)editor.addNode(ShaderNodeType::PARTICLE_STREAM, pos, false);
+								ParticleStreamNode* node = (ParticleStreamNode*)editor.addNode(ShaderNodeType::PARTICLE_STREAM, pos);
 								node->m_stream = stream;
-								editor.pushUndo(SimpleUndoRedo::NO_MERGE_UNDO);
 							}
 							u32 stream;
 						} creator;
@@ -3244,7 +3245,7 @@ void ShaderEditor::open(const char* path) {
 ShaderEditorWindow::INodeTypeVisitor& ShaderEditorWindow::INodeTypeVisitor::visitType(const char* label, ShaderNodeType type, char shortcut ) {
 	struct : ICreator {
 		void create(ShaderEditorWindow& editor, ImVec2 pos) override {
-			editor.addNode(type, pos, true);
+			editor.addNode(type, pos);
 		};
 		ShaderNodeType type;
 	} creator;
