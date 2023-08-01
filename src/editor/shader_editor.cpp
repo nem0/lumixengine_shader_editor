@@ -406,7 +406,7 @@ struct ShaderEditorResource {
 
 ResourceType ShaderEditorResource::TYPE("shader_graph");
 
-struct ShaderEditor final : StudioApp::IPlugin, EditorAssetPlugin {
+struct ShaderEditor final : StudioApp::IPlugin {
 	struct FunctionPlugin : EditorAssetPlugin {
 		FunctionPlugin(ShaderEditor& editor) 
 			: EditorAssetPlugin("Shader graph function", "sfn", TYPE, editor.m_app, editor.m_allocator)
@@ -430,42 +430,64 @@ struct ShaderEditor final : StudioApp::IPlugin, EditorAssetPlugin {
 		static ResourceType TYPE;
 	};
 
+	struct AssetPlugin : EditorAssetPlugin {
+		AssetPlugin(ShaderEditor& editor)
+			: EditorAssetPlugin("Shader graph", "sed", Shader::TYPE, editor.m_app, editor.m_allocator)
+			, m_editor(editor)
+		{}
+
+		bool compile(const Path& src) override {
+			ShaderEditorResource res(src, m_editor, m_editor.m_allocator);
+			if (!res.load(m_app)) {
+				logError("Failed to load ", src);
+				return false;
+			}
+
+			String source(m_editor.m_allocator);
+			if (!res.generate(&source)) return false;
+
+			Span<const u8> span((const u8*)source.c_str(), source.length());
+			
+			m_editor.registerDependencies(res);
+			
+			return m_editor.m_app.getAssetCompiler().writeCompiledResource(src, span);
+		}
+
+		void createResource(OutputMemoryStream& blob) override {
+			ShaderEditorResource res(Path("new surface shader"), m_editor, m_editor.m_allocator);
+			res.init(ShaderResourceEditorType::SURFACE);
+			res.serialize(blob);
+		}
+
+		void onResourceDoubleClicked(const Path& path) override {
+			m_editor.open(path.c_str());
+		}
+
+		void listLoaded() override {
+			auto& resources = m_editor.m_app.getAssetCompiler().lockResources();
+			for (const AssetCompiler::ResourceItem& res : resources) {
+				if (res.type != FunctionPlugin::TYPE) continue;
+				m_editor.addFunction(res.path);
+			}
+			m_editor.m_app.getAssetCompiler().unlockResources();
+		}
+
+		ShaderEditor& m_editor;
+	};
+
 	ShaderEditor(StudioApp& app)
-		: EditorAssetPlugin("Shader graph", "sed", Shader::TYPE, app, m_allocator)
-		, m_allocator(app.getAllocator(), "shader editor")
+		: m_allocator(app.getAllocator(), "shader editor")
 		, m_app(app)
 		, m_functions(m_allocator)
 		, m_function_plugin(*this)
+		, m_asset_plugin(*this)
 	{}
-
-	bool compile(const Path& src) override {
-		ShaderEditorResource res(src, *this, m_allocator);
-		if (!res.load(m_app)) {
-			logError("Failed to load ", src);
-			return false;
-		}
-
-		String source(m_allocator);
-		if (!res.generate(&source)) return false;
-
-		Span<const u8> span((const u8*)source.c_str(), source.length());
-		
-		registerDependencies(res);
-		
-		return m_app.getAssetCompiler().writeCompiledResource(src, span);
-	}
 
 	void registerDependencies(const ShaderEditorResource& res);
 
-	void createResource(OutputMemoryStream& blob) override {
-		ShaderEditorResource res(Path("new surface shader"), *this, m_allocator);
-		res.init(ShaderResourceEditorType::SURFACE);
-		res.serialize(blob);
-	}
-
-	void onResourceDoubleClicked(const Path& path) {
-		open(path.c_str());
-	}
+	void init() override {}
+	const char* getName() const override { return "shader editor"; }
+	bool showGizmo(WorldView&, ComponentUID) override { return false; }
 
 	void addFunction(const Path& path) {
 		FileSystem& fs = m_app.getEngine().getFileSystem();
@@ -484,26 +506,13 @@ struct ShaderEditor final : StudioApp::IPlugin, EditorAssetPlugin {
 		m_functions.emplace(shd.move());
 	}
 
-	void init() {}
-
-	void listLoaded() override {
-		auto& resources = m_app.getAssetCompiler().lockResources();
-		for (const AssetCompiler::ResourceItem& res : resources) {
-			if (res.type != FunctionPlugin::TYPE) continue;
-			addFunction(res.path);
-		}
-		m_app.getAssetCompiler().unlockResources();
-	}
-
-	const char* StudioApp::IPlugin::getName() const override { return "shader editor"; }
-	bool showGizmo(WorldView&, ComponentUID) override { return false; }
-
 	void open(const char* path);
 
 	TagAllocator m_allocator;
 	StudioApp& m_app;
 	Array<UniquePtr<ShaderEditorResource>> m_functions;
 	FunctionPlugin m_function_plugin;
+	AssetPlugin m_asset_plugin;
 };
 
 ResourceType ShaderEditor::FunctionPlugin::TYPE("shader_graph_function");
@@ -911,6 +920,30 @@ struct CodeNode : ShaderEditorResource::Node {
 	Array<Variable> m_outputs;
 	String m_code;
 };
+
+static u32 getChannelsCount(ShaderEditorResource::ValueType type) {
+	switch (type) {
+		case ShaderEditorResource::ValueType::BOOL:
+		case ShaderEditorResource::ValueType::INT:
+		case ShaderEditorResource::ValueType::FLOAT:
+			return 1;
+		case ShaderEditorResource::ValueType::VEC2:
+			return 2;
+		case ShaderEditorResource::ValueType::VEC3:
+			return 3;
+		case ShaderEditorResource::ValueType::IVEC4:
+		case ShaderEditorResource::ValueType::VEC4:
+			return 4;
+		default:
+			ASSERT(false);
+			return 0;
+	}
+}
+
+static ShaderEditorResource::ValueType pickBiggerType(ShaderEditorResource::ValueType t0, ShaderEditorResource::ValueType t1) {
+	if (getChannelsCount(t0) > getChannelsCount(t1)) return t0;
+	return t1;
+}
 
 template <ShaderNodeType Type>
 struct OperatorNode : ShaderEditorResource::Node {
@@ -1382,30 +1415,6 @@ struct BuiltinFunctionCallNode : ShaderEditorResource::Node
 	}
 };
 
-static u32 getChannelsCount(ShaderEditorResource::ValueType type) {
-	switch (type) {
-		case ShaderEditorResource::ValueType::BOOL:
-		case ShaderEditorResource::ValueType::INT:
-		case ShaderEditorResource::ValueType::FLOAT:
-			return 1;
-		case ShaderEditorResource::ValueType::VEC2:
-			return 2;
-		case ShaderEditorResource::ValueType::VEC3:
-			return 3;
-		case ShaderEditorResource::ValueType::IVEC4:
-		case ShaderEditorResource::ValueType::VEC4:
-			return 4;
-		default:
-			ASSERT(false);
-			return 0;
-	}
-}
-
-static ShaderEditorResource::ValueType pickBiggerType(ShaderEditorResource::ValueType t0, ShaderEditorResource::ValueType t1) {
-	if (getChannelsCount(t0) > getChannelsCount(t1)) return t0;
-	return t1;
-}
-
 static void makeSafeCast(OutputMemoryStream& blob, ShaderEditorResource::ValueType t0, ShaderEditorResource::ValueType t1) {
 	const u32 c0 = getChannelsCount(t0);
 	const u32 c1 = getChannelsCount(t1);
@@ -1585,7 +1594,7 @@ struct PositionNode : ShaderEditorResource::Node {
 
 	ShaderEditorResource::ValueType getOutputType(int) const override { return ShaderEditorResource::ValueType::VEC3; }
 
-	void printReference(OutputMemoryStream& blob, int output_idx) const {
+	void printReference(OutputMemoryStream& blob, int output_idx) const override {
 		switch (m_space) {
 			case CAMERA: blob << "v_wpos"; break;
 			case LOCAL: blob << "v_local_position"; break;
@@ -1627,7 +1636,7 @@ struct VaryingNode : ShaderEditorResource::Node {
 		}
 	}
 
-	void printReference(OutputMemoryStream& blob, int output_idx) const {
+	void printReference(OutputMemoryStream& blob, int output_idx) const override {
 		switch(Type) {
 			case ShaderNodeType::NORMAL: blob << "v_normal"; break;
 			case ShaderNodeType::UV0: blob << "v_uv"; break;
