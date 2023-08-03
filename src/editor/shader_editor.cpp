@@ -418,7 +418,7 @@ struct ShaderEditor final : StudioApp::IPlugin {
 			m_editor.addFunction(Path(path));
 		}
 
-		void onResourceDoubleClicked(const Path& path) override { m_editor.open(path); }
+		void openEditor(const Path& path) override { m_editor.open(path); }
 
 		void createResource(OutputMemoryStream& blob) override {
 			ShaderEditorResource res(Path("new shader function"), m_editor, m_editor.m_allocator);
@@ -459,9 +459,7 @@ struct ShaderEditor final : StudioApp::IPlugin {
 			res.serialize(blob);
 		}
 
-		void onResourceDoubleClicked(const Path& path) override {
-			m_editor.open(path.c_str());
-		}
+		void openEditor(const Path& path) override { m_editor.open(path.c_str()); }
 
 		void listLoaded() override {
 			auto& resources = m_editor.m_app.getAssetCompiler().lockResources();
@@ -2908,7 +2906,6 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 	}
 
 	const Path& getPath() override { return m_resource.m_path; }
-	void destroy() override { LUMIX_DELETE(m_app.getAllocator(), this); }
 
 	void pushUndo(u32 tag) override {
 		m_dirty = true;
@@ -3041,15 +3038,16 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 
 	void onGUIMenu() {
 		if(ImGui::BeginMenuBar()) {
+			const CommonActions& actions = m_app.getCommonActions();
 			if(ImGui::BeginMenu("File")) {
 				ImGui::MenuItem("View source", nullptr, &m_source_open);
-				if (menuItem(m_app.getSaveAction(), true)) saveAs(m_resource.m_path.c_str());
+				if (menuItem(actions.save, true)) saveAs(m_resource.m_path.c_str());
 				if (ImGui::MenuItem("Save as")) m_show_save_as = true;
 				ImGui::EndMenu();
 			}
 			if (ImGui::BeginMenu("Edit")) {
-				if (menuItem(m_app.getUndoAction(), canUndo())) undo();
-				if (menuItem(m_app.getRedoAction(), canRedo())) redo();
+				if (menuItem(actions.undo, canUndo())) undo();
+				if (menuItem(actions.redo, canRedo())) redo();
 				if (ImGui::MenuItem(ICON_FA_BRUSH "Clear")) deleteUnreachable();
 				ImGui::EndMenu();
 			}
@@ -3073,10 +3071,11 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 	}
 
 	bool onAction(const Action& action) override {
-		if (&action == &m_app.getDeleteAction()) deleteSelectedNodes();
-		else if (&action == &m_app.getSaveAction()) saveAs(m_resource.m_path.c_str());
-		else if (&action == &m_app.getUndoAction()) undo();
-		else if (&action == &m_app.getRedoAction()) redo();
+		const CommonActions& actions = m_app.getCommonActions();
+		if (&action == &actions.del) deleteSelectedNodes();
+		else if (&action == &actions.save) saveAs(m_resource.m_path.c_str());
+		else if (&action == &actions.undo) undo();
+		else if (&action == &actions.redo) redo();
 		else return false;
 		return true;
 	}
@@ -3240,15 +3239,9 @@ void ShaderEditor::registerDependencies(const ShaderEditorResource& res) {
 }
 
 void ShaderEditor::open(const char* path) {
-	AssetBrowser& ab = m_app.getAssetBrowser();
-	if (AssetEditorWindow* win = ab.getWindow(Path(path))) {
-		win->m_focus_request = true;
-		return;
-	}
-
 	IAllocator& allocator = m_app.getAllocator();
-	ShaderEditorWindow* win = LUMIX_NEW(allocator, ShaderEditorWindow)(Path(path), *this, m_app, m_app.getAllocator());
-	ab.addWindow(win);
+	UniquePtr<ShaderEditorWindow> win = UniquePtr<ShaderEditorWindow>::create(allocator, Path(path), *this, m_app, m_app.getAllocator());
+	m_app.getAssetBrowser().addWindow(win.move());
 }
 
 ShaderEditorWindow::INodeTypeVisitor& ShaderEditorWindow::INodeTypeVisitor::visitType(const char* label, ShaderNodeType type, char shortcut ) {
