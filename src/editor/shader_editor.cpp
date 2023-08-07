@@ -10,6 +10,7 @@
 #include "engine/os.h"
 #include "engine/path.h"
 #include "engine/plugin.h"
+#include "engine/profiler.h"
 #include "engine/stream.h"
 #include "engine/string.h"
 #include "engine/world.h"
@@ -1254,7 +1255,7 @@ struct FunctionOutputNode : ShaderEditorResource::Node {
 		if (!input) return error("Missing input");
 
 		const ShaderEditorResource::ValueType output_type = input.node->getOutputType(input.output_idx);
-		Span<const char> name = Path::getBasename(m_resource.m_path.c_str());
+		StringView name = Path::getBasename(m_resource.m_path.c_str());
 		blob << toString(output_type) << " " << name << "(";
 
 		bool first_arg = true;
@@ -1302,7 +1303,7 @@ struct FunctionCallNode : ShaderEditorResource::Node {
 	ShaderEditorResource::ValueType getOutputType(int) const override { return m_function_resource->getFunctionOutputType(); }
 	
 	bool generate(OutputMemoryStream& blob) override {
-		Span<const char> fn_name = Path::getBasename(m_function_resource->m_path.c_str());
+		StringView fn_name = Path::getBasename(m_function_resource->m_path.c_str());
 		ShaderEditorResource::ValueType type = m_function_resource->getFunctionOutputType();
 		blob << "\t" << toString(type) << " v" << m_id << " = " << fn_name << "(";
 		u32 input_count = 0;
@@ -1323,7 +1324,7 @@ struct FunctionCallNode : ShaderEditorResource::Node {
 	}
 
 	bool onGUI() override {
-		Span<const char> basename = Path::getBasename(m_function_resource->m_path.c_str());
+		StringView basename = Path::getBasename(m_function_resource->m_path.c_str());
 		StaticString<LUMIX_MAX_PATH> name(basename);
 		ImGuiEx::NodeTitle(name);
 		outputSlot();
@@ -3256,6 +3257,7 @@ ShaderEditorWindow::INodeTypeVisitor& ShaderEditorWindow::INodeTypeVisitor::visi
 }
 
 LUMIX_STUDIO_ENTRY(shader_editor) {
+	PROFILE_FUNCTION();
 	return LUMIX_NEW(app.getAllocator(), ShaderEditor)(app);
 }
 
