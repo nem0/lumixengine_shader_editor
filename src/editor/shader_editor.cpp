@@ -414,9 +414,9 @@ struct ShaderEditor final : StudioApp::IPlugin {
 			, m_editor(editor)
 		{}
 		
-		void addSubresources(AssetCompiler& compiler, const char* path) override {
+		void addSubresources(AssetCompiler& compiler, const Path& path) override {
 			compiler.addResource(TYPE, path);
-			m_editor.addFunction(Path(path));
+			m_editor.addFunction(path);
 		}
 
 		void openEditor(const Path& path) override { m_editor.open(path); }
@@ -460,7 +460,7 @@ struct ShaderEditor final : StudioApp::IPlugin {
 			res.serialize(blob);
 		}
 
-		void openEditor(const Path& path) override { m_editor.open(path.c_str()); }
+		void openEditor(const Path& path) override { m_editor.open(path); }
 
 		void listLoaded() override {
 			auto& resources = m_editor.m_app.getAssetCompiler().lockResources();
@@ -505,7 +505,7 @@ struct ShaderEditor final : StudioApp::IPlugin {
 		m_functions.emplace(shd.move());
 	}
 
-	void open(const char* path);
+	void open(const Path& path);
 
 	TagAllocator m_allocator;
 	StudioApp& m_app;
@@ -3239,9 +3239,9 @@ void ShaderEditor::registerDependencies(const ShaderEditorResource& res) {
 	}
 }
 
-void ShaderEditor::open(const char* path) {
+void ShaderEditor::open(const Path& path) {
 	IAllocator& allocator = m_app.getAllocator();
-	UniquePtr<ShaderEditorWindow> win = UniquePtr<ShaderEditorWindow>::create(allocator, Path(path), *this, m_app, m_app.getAllocator());
+	UniquePtr<ShaderEditorWindow> win = UniquePtr<ShaderEditorWindow>::create(allocator, path, *this, m_app, m_app.getAllocator());
 	m_app.getAssetBrowser().addWindow(win.move());
 }
 
