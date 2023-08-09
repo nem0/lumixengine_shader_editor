@@ -335,8 +335,8 @@ struct ShaderEditorResource {
 
 		if (source) {
 			source->resize((u32)blob.size());
-			memcpy(source->getData(), blob.data(), source->length());
-			source->getData()[source->length()] = '\0';
+			memcpy(source->getMutableData(), blob.data(), source->length());
+			source->getMutableData()[source->length()] = '\0';
 		}
 		return true;
 	}
@@ -831,13 +831,8 @@ struct CodeNode : ShaderEditorResource::Node {
 							ImGui::SetNextItemWidth(-1);
 							changed = edit("##type", &var.type) || changed;
 							ImGui::TableNextColumn();
-							char buf[128];
-							copyString(buf, var.name.c_str());
 							ImGui::SetNextItemWidth(-1);
-							if (ImGui::InputText("##name", buf, sizeof(buf))) {
-								var.name = buf;
-								changed = true;
-							}
+							changed = inputString("##name", &var.name) || changed;
 							ImGui::PopID();
 							if (del) {
 								changed = true;
@@ -862,10 +857,7 @@ struct CodeNode : ShaderEditorResource::Node {
 			edit_vars("Outputs", m_outputs, false);
 
 			if (ImGui::CollapsingHeader("Code", ImGuiTreeNodeFlags_DefaultOpen)) {
-				char buf[4096];
-				copyString(buf, m_code.c_str());
-				if (ImGui::InputTextMultiline("##code", buf, sizeof(buf), ImVec2(-1, ImGui::GetContentRegionAvail().y))) {
-					m_code = buf;
+				if (inputStringMultiline("##code", &m_code, ImVec2(-1, ImGui::GetContentRegionAvail().y))) {
 					changed = true;
 				}
 			}
@@ -1325,7 +1317,7 @@ struct FunctionCallNode : ShaderEditorResource::Node {
 
 	bool onGUI() override {
 		StringView basename = Path::getBasename(m_function_resource->m_path.c_str());
-		StaticString<LUMIX_MAX_PATH> name(basename);
+		StaticString<MAX_PATH> name(basename);
 		ImGuiEx::NodeTitle(name);
 		outputSlot();
 		for (const Node* node : m_function_resource->m_nodes) {
@@ -1852,11 +1844,7 @@ struct SampleNode : ShaderEditorResource::Node
 
 		ImGui::SameLine();
 		outputSlot();
-		char tmp[128];
-		copyString(tmp, m_texture.c_str());
-		bool res = ImGui::InputText("Texture", tmp, sizeof(tmp));
-		if (res) m_texture = tmp;
-		return res;
+		return inputString("Texture", &m_texture);
 	}
 
 	String m_texture;
@@ -1969,12 +1957,8 @@ struct StaticSwitchNode : ShaderEditorResource::Node {
 
 		ImGui::SameLine();
 		outputSlot();
-		char tmp[128];
-		copyString(tmp, m_define.c_str());
 		ImGui::SetNextItemWidth(80);
-		bool res = ImGui::InputText("##param", tmp, sizeof(tmp));
-		if (res) m_define = tmp;
-		return res;
+		return inputString("##param", &m_define);
 	}
 
 	void serialize(OutputMemoryStream& blob) override { blob.writeString(m_define.c_str()); }
@@ -2040,11 +2024,7 @@ struct ParameterNode : ShaderEditorResource::Node {
 		}
 		
 		outputSlot();
-		char tmp[128];
-		copyString(tmp, m_name.c_str());
-		bool res = ImGui::InputText("##name", tmp, sizeof(tmp));
-		if (res) m_name = tmp;
-		return res;
+		return inputString("##name", &m_name);
 	}
 
 	bool generate(OutputMemoryStream& blob) override {
@@ -2890,7 +2870,7 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 					ImGui::Text("Empty");
 				} else {
 					ImGui::SetNextItemWidth(-1);
-					ImGui::InputTextMultiline("##src", m_source.getData(), m_source.length(), ImVec2(0, ImGui::GetContentRegionAvail().y), ImGuiInputTextFlags_ReadOnly);
+					ImGui::InputTextMultiline("##src", m_source.getMutableData(), m_source.length(), ImVec2(0, ImGui::GetContentRegionAvail().y), ImGuiInputTextFlags_ReadOnly);
 				}
 			}
 			ImGui::End();
@@ -2996,7 +2976,7 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 		if (filter[0]) {
 			struct : INodeTypeVisitor {
 				INodeTypeVisitor& visitType(const char* label, ICreator& creator, char shortcut) override {
-					if (!created && stristr(label, filter)) {
+					if (!created && findInsensitive(label, filter)) {
 						if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::MenuItem(label)) {
 							creator.create(*editor, pos);
 							editor->pushUndo(NO_MERGE_UNDO);
@@ -3108,7 +3088,7 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 
 		if (visitor.beginCategory("Functions")) {
 			for (const auto& fn : m_editor.m_functions) {
-				const StaticString<LUMIX_MAX_PATH> name(Path::getBasename(fn->m_path.c_str()));
+				const StaticString<MAX_PATH> name(Path::getBasename(fn->m_path.c_str()));
 				struct : INodeTypeVisitor::ICreator {
 					void create(ShaderEditorWindow& editor, ImVec2 pos) override {
 						FunctionCallNode* node = (FunctionCallNode*)editor.addNode(ShaderNodeType::FUNCTION_CALL, pos);
