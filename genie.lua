@@ -7,7 +7,10 @@ project "shader_editor"
 		"genie.lua"
 	}
 	defines { "BUILDING_SHADER_EDITOR" }
-	links { "editor", "engine", "renderer" }
+	links { "editor", "engine", "renderer", "core" }
+	if build_studio then
+		links { "editor" }
+	end
 	useLua()
 	defaultConfigurations()
 	
