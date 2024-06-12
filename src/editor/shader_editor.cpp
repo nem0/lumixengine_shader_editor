@@ -11,6 +11,7 @@
 #include "editor/editor_asset.h"
 #include "editor/settings.h"
 #include "editor/studio_app.h"
+#include "engine/component_uid.h"
 #include "engine/engine.h"
 #include "engine/plugin.h"
 #include "engine/world.h"
