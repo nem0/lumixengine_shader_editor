@@ -3019,8 +3019,13 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 	}
 
 	void onGUIMenu() {
+		CommonActions& actions = m_app.getCommonActions();
+		if (m_app.checkShortcut(actions.del)) deleteSelectedNodes();
+		else if (m_app.checkShortcut(actions.save)) saveAs(m_resource.m_path.c_str());
+		else if (m_app.checkShortcut(actions.undo)) undo();
+		else if (m_app.checkShortcut(actions.redo)) redo();
+		
 		if(ImGui::BeginMenuBar()) {
-			const CommonActions& actions = m_app.getCommonActions();
 			if(ImGui::BeginMenu("File")) {
 				ImGui::MenuItem("View source", nullptr, &m_source_open);
 				if (menuItem(actions.save, true)) saveAs(m_resource.m_path.c_str());
@@ -3050,16 +3055,6 @@ struct ShaderEditorWindow : public AssetEditorWindow, NodeEditor {
 	void deleteUnreachable() {
 		m_resource.deleteUnreachable();
 		pushUndo(NO_MERGE_UNDO);
-	}
-
-	bool onAction(const Action& action) override {
-		const CommonActions& actions = m_app.getCommonActions();
-		if (&action == &actions.del) deleteSelectedNodes();
-		else if (&action == &actions.save) saveAs(m_resource.m_path.c_str());
-		else if (&action == &actions.undo) undo();
-		else if (&action == &actions.redo) redo();
-		else return false;
-		return true;
 	}
 
 	ShaderEditorResource::Node* addNode(ShaderNodeType node_type, ImVec2 pos) {

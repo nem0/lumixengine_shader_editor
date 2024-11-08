@@ -11,7 +11,6 @@ project "shader_editor"
 	if build_studio then
 		links { "editor" }
 	end
-	useLua()
 	defaultConfigurations()
 	
 linkPlugin("shader_editor")
