@@ -539,6 +539,7 @@ static ShaderEditorResource::ValueType toType(const gpu::Attribute& attr) {
 				return ShaderEditorResource::ValueType::NONE;
 			}
 			break;
+		case gpu::AttributeType::U16:
 		case gpu::AttributeType::U8:
 			if (attr.flags & gpu::Attribute::AS_INT) {
 				switch (attr.components_count) {
@@ -2127,6 +2128,7 @@ struct PBRNode : ShaderEditorResource::Node
 					return "int";
 				}
 				break;
+			case gpu::AttributeType::U16:
 			case gpu::AttributeType::U8:
 				if (attr.flags & gpu::Attribute::AS_INT) {
 					switch (attr.components_count) {
