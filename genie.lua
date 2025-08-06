@@ -1,5 +1,4 @@
-project "shader_editor"
-	libType()
+if plugin "shader_editor" then
 	files { 
 		"src/**.c",
 		"src/**.cpp",
@@ -7,10 +6,8 @@ project "shader_editor"
 		"genie.lua"
 	}
 	defines { "BUILDING_SHADER_EDITOR" }
-	links { "editor", "engine", "renderer", "core" }
+	dynamic_link_plugin { "editor", "engine", "renderer", "core" }
 	if build_studio then
-		links { "editor" }
+		dynamic_link_plugin { "editor" }
 	end
-	defaultConfigurations()
-	
-linkPlugin("shader_editor")
+end

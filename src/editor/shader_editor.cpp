@@ -6,6 +6,7 @@
 #include "core/profiler.h"
 #include "core/stream.h"
 #include "core/string.h"
+#include "editor/action.h"
 #include "editor/asset_browser.h"
 #include "editor/asset_compiler.h"
 #include "editor/editor_asset.h"
