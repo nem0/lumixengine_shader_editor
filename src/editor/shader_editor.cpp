@@ -416,7 +416,7 @@ struct ShaderEditor final : StudioApp::IPlugin {
 			, m_editor(editor)
 		{}
 		
-		void addSubresources(AssetCompiler& compiler, const Path& path) override {
+		void addSubresources(AssetCompiler& compiler, const Path& path, AtomicI32&) override {
 			compiler.addResource(TYPE, path);
 			m_editor.addFunction(path);
 		}
